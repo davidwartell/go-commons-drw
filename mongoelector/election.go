@@ -95,7 +95,7 @@ type ElectorStatus struct {
 	Boundary      string         `json:"boundary"`
 	Hostname      string         `json:"hostname"`
 	Port          uint64         `json:"port"`
-	IsLeader      bool           `json:"leaderPort"`
+	IsLeader      bool           `json:"isLeader"`
 	ElectedLeader *ElectedLeader `json:"electedLeader"`
 }
 
