@@ -49,6 +49,12 @@ func NewUUID() *UUID {
 	}
 }
 
+func MakeUUID() UUID {
+	return UUID{
+		id: primitive.NewObjectID(),
+	}
+}
+
 func (g *UUID) SetUUID(i *UUID) {
 	g.id = i.id
 }
