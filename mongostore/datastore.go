@@ -57,7 +57,7 @@ type Index struct {
 	Id             IndexIdentifier
 	Version        uint64 // increment any time the model or options changes - calling createIndex() with the same name but different \
 	// options than an existing index will throw an error MongoError: \
-	// Index with name: **indexName** already exists with different options
+	// Index with name: **MongoIndexName** already exists with different options
 	Model mongo.IndexModel
 }
 
@@ -101,7 +101,7 @@ type DataStore struct {
 	wg                    sync.WaitGroup
 	managedIndexes        []Index
 	managedIndexMap       map[string]Index
-	managedIndexesLock    sync.Mutex
+	managedIndexesLock    sync.RWMutex
 }
 
 var instance *DataStore
@@ -495,22 +495,22 @@ func (a *DataStore) AddAndEnsureManagedIndexes(ctx context.Context, addManagedIn
 	return a.ensureIndexes(ctx)
 }
 
-func (a *DataStore) MongoIndexName(collectionName string, indexId IndexIdentifier) (mongoIndexName string, err error) {
-	a.managedIndexesLock.Lock()
-	defer a.managedIndexesLock.Unlock()
+func (a *DataStore) Index(collectionName string, indexId IndexIdentifier) (idx Index, err error) {
+	a.managedIndexesLock.RLock()
+	defer a.managedIndexesLock.RUnlock()
 	indexFullName := managedIndexId(collectionName, indexId)
-	idx, exists := a.managedIndexMap[indexFullName]
+	var exists bool
+	idx, exists = a.managedIndexMap[indexFullName]
 	if !exists {
 		err = errors.Errorf("index with identifier %s not found", indexFullName)
 		return
 	}
-	mongoIndexName = idx.indexName()
 	return
 }
 
-func (a *DataStore) MongoIndexNameOrPanic(collectionName string, indexId IndexIdentifier) (mongoIndexName string) {
+func (a *DataStore) IndexOrPanic(collectionName string, indexId IndexIdentifier) (idx Index) {
 	var err error
-	mongoIndexName, err = a.MongoIndexName(collectionName, indexId)
+	idx, err = a.Index(collectionName, indexId)
 	if err != nil {
 		logger.Instance().Panic("error getting index for identifier", logger.Error(err))
 	}
@@ -575,7 +575,7 @@ func (a *DataStore) ensureIndexes(ctx context.Context) (okOrNoRetry bool) {
 		collectionMapToindexNameMap[colName] = make(map[string]interface{})
 	}
 	for _, idx := range a.managedIndexes {
-		idxName := idx.indexName()
+		idxName := idx.MongoIndexName()
 		if collectionMapToindexNameMap[idx.CollectionName] == nil {
 			collectionMapToindexNameMap[idx.CollectionName] = make(map[string]interface{})
 		}
@@ -650,7 +650,7 @@ CollectionLoop:
 	// 3. Attempt to create each index.  If the index already exists create will return and do nothing.
 	//
 	for _, idx := range a.managedIndexes {
-		idxName := idx.indexName()
+		idxName := idx.MongoIndexName()
 		if idx.Model.Options == nil {
 			idx.Model.Options = mongooptions.Index()
 		}
@@ -810,7 +810,7 @@ func (a *DataStore) standardOptions() (clientOptions *mongooptions.ClientOptions
 	return
 }
 
-func (idx Index) indexName() string {
+func (idx Index) MongoIndexName() string {
 	var sb strings.Builder
 	sb.WriteString(idx.Id.String())
 	sb.WriteString(indexNameDelim)
