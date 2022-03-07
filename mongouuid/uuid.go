@@ -73,6 +73,16 @@ func UUIDPointerSliceToSlice(inputSlice []*UUID) (outputSlice []UUID) {
 	return
 }
 
+func UUIDSliceToPointerSlice(inputSlice []UUID) (outputSlice []*UUID) {
+	outputSlice = make([]*UUID, len(inputSlice))
+	for i, ptr := range inputSlice {
+		var uuid UUID
+		uuid = ptr
+		outputSlice[i] = &uuid
+	}
+	return
+}
+
 func UUIDFromString(s string) (UUID, error) {
 	// remove any quotes
 	s = strings.Replace(s, "\"", "", -1)
