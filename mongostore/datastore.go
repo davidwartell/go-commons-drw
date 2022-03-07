@@ -50,10 +50,11 @@ const DESC = -1
 var DirtyWriteError = errors.New("dirty write error")
 
 type DirtyWriteProtectedFunc func() error
+type IndexIdentifier string
 
 type Index struct {
 	CollectionName string
-	IndexName      string
+	Id             IndexIdentifier
 	Version        uint64 // increment any time the model or options changes - calling createIndex() with the same name but different \
 	// options than an existing index will throw an error MongoError: \
 	// Index with name: **indexName** already exists with different options
@@ -99,6 +100,7 @@ type DataStore struct {
 	cancel                context.CancelFunc
 	wg                    sync.WaitGroup
 	managedIndexes        []Index
+	managedIndexMap       map[string]Index
 	managedIndexesLock    sync.Mutex
 }
 
@@ -122,6 +124,7 @@ func Instance() *DataStore {
 				password:                             DefaultPassword,
 				maxPoolSize:                          DefaultMaxPoolSize,
 			},
+			managedIndexMap: make(map[string]Index),
 		}
 	})
 	return instance
@@ -492,19 +495,49 @@ func (a *DataStore) AddAndEnsureManagedIndexes(ctx context.Context, addManagedIn
 	return a.ensureIndexes(ctx)
 }
 
+func (a *DataStore) MongoIndexName(collectionName string, indexId IndexIdentifier) (mongoIndexName string, err error) {
+	a.managedIndexesLock.Lock()
+	defer a.managedIndexesLock.Unlock()
+	indexFullName := managedIndexId(collectionName, indexId)
+	idx, exists := a.managedIndexMap[indexFullName]
+	if !exists {
+		err = errors.Errorf("index with identifier %s not found", indexFullName)
+		return
+	}
+	mongoIndexName = idx.indexName()
+	return
+}
+
+func (a *DataStore) MongoIndexNameOrPanic(collectionName string, indexId IndexIdentifier) (mongoIndexName string) {
+	var err error
+	mongoIndexName, err = a.MongoIndexName(collectionName, indexId)
+	if err != nil {
+		logger.Instance().Panic("error getting index for identifier", logger.Error(err))
+	}
+	return
+}
+
+func (iid IndexIdentifier) String() string {
+	return string(iid)
+}
+
+func managedIndexId(collectionName string, indexId IndexIdentifier) string {
+	var sb strings.Builder
+	sb.WriteString(collectionName)
+	sb.WriteString("+")
+	sb.WriteString(indexId.String())
+	return sb.String()
+}
+
 func (a *DataStore) addManagedIndexes(addManagedIndexes []Index) {
 	a.managedIndexesLock.Lock()
 	defer a.managedIndexesLock.Unlock()
-	indexNameMap := make(map[string]Index)
-	for _, idx := range a.managedIndexes {
-		indexNameMap[idx.CollectionName+"+"+idx.IndexName] = idx
-	}
 	for _, idx := range addManagedIndexes {
-		indexNameMap[idx.CollectionName+"+"+idx.IndexName] = idx
+		a.managedIndexMap[managedIndexId(idx.CollectionName, idx.Id)] = idx
 	}
 
 	var newManagedIndexes []Index
-	for _, idx := range indexNameMap {
+	for _, idx := range a.managedIndexMap {
 		newManagedIndexes = append(newManagedIndexes, idx)
 	}
 	a.managedIndexes = newManagedIndexes
@@ -542,7 +575,7 @@ func (a *DataStore) ensureIndexes(ctx context.Context) (okOrNoRetry bool) {
 		collectionMapToindexNameMap[colName] = make(map[string]interface{})
 	}
 	for _, idx := range a.managedIndexes {
-		idxName := indexName(idx)
+		idxName := idx.indexName()
 		if collectionMapToindexNameMap[idx.CollectionName] == nil {
 			collectionMapToindexNameMap[idx.CollectionName] = make(map[string]interface{})
 		}
@@ -617,7 +650,7 @@ CollectionLoop:
 	// 3. Attempt to create each index.  If the index already exists create will return and do nothing.
 	//
 	for _, idx := range a.managedIndexes {
-		idxName := indexName(idx)
+		idxName := idx.indexName()
 		if idx.Model.Options == nil {
 			idx.Model.Options = mongooptions.Index()
 		}
@@ -626,7 +659,7 @@ CollectionLoop:
 		var collection *mongo.Collection
 		collection, err = Instance().Collection(ctx, idx.CollectionName)
 		if err != nil {
-			task.LogErrorf(taskName, "error getting collection to ensure index %s.%s: %v", idx.CollectionName, idx.IndexName, err)
+			task.LogErrorf(taskName, "error getting collection to ensure index %s.%s: %v", idx.CollectionName, idx.Id, err)
 			continue
 		}
 
@@ -777,9 +810,9 @@ func (a *DataStore) standardOptions() (clientOptions *mongooptions.ClientOptions
 	return
 }
 
-func indexName(idx Index) string {
+func (idx Index) indexName() string {
 	var sb strings.Builder
-	sb.WriteString(idx.IndexName)
+	sb.WriteString(idx.Id.String())
 	sb.WriteString(indexNameDelim)
 	sb.WriteString(strconv.FormatUint(idx.Version, 10))
 	return sb.String()

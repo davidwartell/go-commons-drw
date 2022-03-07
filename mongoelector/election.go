@@ -158,7 +158,7 @@ func NewElector(
 var ManagedIndexes = []mongostore.Index{
 	{ // Delete collectionName documents that have expired
 		CollectionName: collectionName,
-		IndexName:      "ttlExpire_ttl",
+		Id:             "ttlExpire_ttl",
 		Version:        0,
 		Model: mongo.IndexModel{
 			Options: options.Index().SetExpireAfterSeconds(0),
