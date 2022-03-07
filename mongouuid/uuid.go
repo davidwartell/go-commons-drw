@@ -65,6 +65,14 @@ func UUIDFromObjectId(oid primitive.ObjectID) UUID {
 	}
 }
 
+func UUIDPointerSliceToSlice(inputSlice []*UUID) (outputSlice []UUID) {
+	outputSlice = make([]UUID, len(inputSlice))
+	for i, ptr := range inputSlice {
+		outputSlice[i] = *ptr
+	}
+	return
+}
+
 func UUIDFromString(s string) (UUID, error) {
 	// remove any quotes
 	s = strings.Replace(s, "\"", "", -1)
