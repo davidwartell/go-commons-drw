@@ -215,7 +215,7 @@ expireWorkerLoop:
 
 		var err error
 		var collection *mongo.Collection
-		collection, err = mongostore.Instance().Collection(e.ctx, collectionName)
+		collection, err = mongostore.Instance().CollectionLinearWriteRead(e.ctx, collectionName)
 		if err != nil {
 			logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err)
 			continue
@@ -321,7 +321,7 @@ func (e *Elector) leaderHeartbeat() {
 		}
 
 		// get a collection, if fail wait and try again
-		collection, err := mongostore.Instance().Collection(e.ctx, collectionName)
+		collection, err := mongostore.Instance().CollectionLinearWriteRead(e.ctx, collectionName)
 		if err != nil {
 			logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err)
 			return
@@ -387,7 +387,7 @@ func (e *Elector) getElectedLeader() *ElectedLeader {
 func (e *Elector) tryWinElection() (won bool, err error) {
 	// get a collection, if fail wait and try again
 	var collection *mongo.Collection
-	collection, err = mongostore.Instance().Collection(e.ctx, collectionName)
+	collection, err = mongostore.Instance().CollectionLinearWriteRead(e.ctx, collectionName)
 	if err != nil {
 		logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err)
 		return false, err

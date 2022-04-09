@@ -92,16 +92,17 @@ type Options struct {
 type DataStore struct {
 	sync.RWMutex
 	task.BaseTask
-	started               bool
-	options               *Options
-	mongoClient           *mongo.Client
-	mongoClientUnsafeFast *mongo.Client
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	wg                    sync.WaitGroup
-	managedIndexes        []Index
-	managedIndexMap       map[string]Index
-	managedIndexesLock    sync.RWMutex
+	started                 bool
+	options                 *Options
+	mongoClient             *mongo.Client
+	mongoClientUnsafeFast   *mongo.Client
+	mongoClientFastestReads *mongo.Client
+	ctx                     context.Context
+	cancel                  context.CancelFunc
+	wg                      sync.WaitGroup
+	managedIndexes          []Index
+	managedIndexMap         map[string]Index
+	managedIndexesLock      sync.RWMutex
 }
 
 var instance *DataStore
@@ -303,6 +304,7 @@ func (a *DataStore) StopTask() {
 
 	// disconnect from mongo
 	var disconnectWg sync.WaitGroup
+
 	disconnectWg.Add(1)
 	go func() {
 		defer disconnectWg.Done()
@@ -319,6 +321,7 @@ func (a *DataStore) StopTask() {
 			a.mongoClient = nil
 		}
 	}()
+
 	disconnectWg.Add(1)
 	go func() {
 		defer disconnectWg.Done()
@@ -335,14 +338,31 @@ func (a *DataStore) StopTask() {
 			a.mongoClientUnsafeFast = nil
 		}
 	}()
+
+	disconnectWg.Add(1)
+	go func() {
+		defer disconnectWg.Done()
+		if a.mongoClientFastestReads != nil {
+			ctx, cancel := context.WithTimeout(
+				context.Background(),
+				time.Duration(a.options.timeoutSecondsShutdown)*time.Second,
+			)
+			defer cancel()
+			err := a.mongoClientFastestReads.Disconnect(ctx)
+			if err != nil {
+				task.LogErrorf(taskName, "shutdown: error on disconnect of mongo client: %v", err)
+			}
+			a.mongoClientFastestReads = nil
+		}
+	}()
 	disconnectWg.Wait()
 
 	a.started = false
 	task.LogInfo(taskName, "stopped")
 }
 
-func (a *DataStore) database(ctx context.Context) (*mongo.Database, error) {
-	client, err := a.client(ctx)
+func (a *DataStore) databaseLinearWriteRead(ctx context.Context) (*mongo.Database, error) {
+	client, err := a.clientLinearWriteRead(ctx)
 	if err != nil {
 		task.LogErrorf(taskName, "error getting collection from client: %v", err)
 		return nil, err
@@ -353,8 +373,8 @@ func (a *DataStore) database(ctx context.Context) (*mongo.Database, error) {
 	return client.Database(dbName), nil
 }
 
-func (a *DataStore) databaseUnsafeFast(ctx context.Context) (*mongo.Database, error) {
-	client, err := a.clientUnsafeFast(ctx)
+func (a *DataStore) databaseUnsafeFastWrites(ctx context.Context) (*mongo.Database, error) {
+	client, err := a.clientUnsafeFastWrites(ctx)
 	if err != nil {
 		task.LogErrorf(taskName, "error getting collection from client: %v", err)
 		return nil, err
@@ -365,16 +385,64 @@ func (a *DataStore) databaseUnsafeFast(ctx context.Context) (*mongo.Database, er
 	return client.Database(dbName), nil
 }
 
+func (a *DataStore) databaseReadNearest(ctx context.Context) (*mongo.Database, error) {
+	client, err := a.clientReadNearest(ctx)
+	if err != nil {
+		task.LogErrorf(taskName, "error getting collection from client: %v", err)
+		return nil, err
+	}
+	a.RLock()
+	dbName := a.options.databaseName
+	a.RUnlock()
+	return client.Database(dbName), nil
+}
+
+// Collection calls CollectionLinearWriteRead()
 func (a *DataStore) Collection(ctx context.Context, name string) (*mongo.Collection, error) {
-	database, err := a.database(ctx)
+	return a.CollectionLinearWriteRead(ctx, name)
+}
+
+// CollectionLinearWriteRead creates a connection with:
+// - readconcern.Majority()
+// - readpref.Primary()
+// - writeconcern.J(true)
+// - writeconcern.WMajority()
+//
+// This connection supplies: "Casual Consistency" in a sharded cluster inside a single client thread.
+// https://www.mongodb.com/docs/manual/core/read-isolation-consistency-recency/#std-label-sessions
+//
+//
+// Note: readpref.Primary() is critical for reads to consistently return results in the same go routine immediately
+// after an insert.  And perhaps not well documented.
+//
+func (a *DataStore) CollectionLinearWriteRead(ctx context.Context, name string) (*mongo.Collection, error) {
+	database, err := a.databaseLinearWriteRead(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return database.Collection(name), nil
 }
 
-func (a *DataStore) CollectionUnsafeFast(ctx context.Context, name string) (*mongo.Collection, error) {
-	database, err := a.databaseUnsafeFast(ctx)
+// CollectionUnsafeFastWrites creates a connection with:
+// - readconcern.Available()
+// - readpref.Nearest()
+// - writeconcern.J(false)
+// - writeconcern.W(1)
+func (a *DataStore) CollectionUnsafeFastWrites(ctx context.Context, name string) (*mongo.Collection, error) {
+	database, err := a.databaseUnsafeFastWrites(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return database.Collection(name), nil
+}
+
+// CollectionReadNearest creates a connection with:
+// - readconcern.Majority()
+// - readpref.Nearest()
+// - writeconcern.J(true)
+// - writeconcern.WMajority()
+func (a *DataStore) CollectionReadNearest(ctx context.Context, name string) (*mongo.Collection, error) {
+	database, err := a.databaseReadNearest(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +464,7 @@ func (a *DataStore) Ping(ctx context.Context) error {
 	ctx, cancel = a.ContextTimeout(ctx)
 	defer cancel()
 
-	client, err = a.client(ctx)
+	client, err = a.clientLinearWriteRead(ctx)
 	if err != nil {
 		task.LogErrorf(taskName, "error getting client for ping: %v", err)
 		return err
@@ -409,7 +477,7 @@ func (a *DataStore) Ping(ctx context.Context) error {
 	}
 
 	var collection *mongo.Collection
-	collection, err = Instance().Collection(ctx, "ping")
+	collection, err = Instance().CollectionLinearWriteRead(ctx, "ping")
 	if err != nil {
 		task.LogErrorf(taskName, "error getting collection for ping write test: %v", err)
 		return err
@@ -560,7 +628,7 @@ func (a *DataStore) ensureIndexes(ctx context.Context) (okOrNoRetry bool) {
 	// 1. Build map of collections and managed index names
 	//
 	var database *mongo.Database
-	database, err = a.database(ctx)
+	database, err = a.databaseLinearWriteRead(ctx)
 	if err != nil {
 		task.LogErrorf(taskName, "ensure indexes: mongo get database failed aborting: %v", err)
 		return false
@@ -588,7 +656,7 @@ func (a *DataStore) ensureIndexes(ctx context.Context) (okOrNoRetry bool) {
 CollectionLoop:
 	for collectionName := range collectionMapToindexNameMap {
 		var collection *mongo.Collection
-		collection, err = Instance().Collection(ctx, collectionName)
+		collection, err = Instance().CollectionLinearWriteRead(ctx, collectionName)
 		if err != nil {
 			task.LogErrorf(taskName, "error getting collection %s to list indexes: %v", collectionName, err)
 			continue
@@ -657,7 +725,7 @@ CollectionLoop:
 		idx.Model.Options = idx.Model.Options.SetName(idxName)
 
 		var collection *mongo.Collection
-		collection, err = Instance().Collection(ctx, idx.CollectionName)
+		collection, err = Instance().CollectionLinearWriteRead(ctx, idx.CollectionName)
 		if err != nil {
 			task.LogErrorf(taskName, "error getting collection to ensure index %s.%s: %v", idx.CollectionName, idx.Id, err)
 			continue
@@ -691,34 +759,34 @@ func (a *DataStore) unsafeFastClient(ctx context.Context) (client *mongo.Client,
 		a.RUnlock()
 	}
 
-	client, err = a.connectUnsafeFast(ctx)
+	client, err = a.connectUnsafeFastWrites(ctx)
 	return
 }
 
-func (a *DataStore) client(ctx context.Context) (client *mongo.Client, err error) {
+func (a *DataStore) clientReadNearest(ctx context.Context) (client *mongo.Client, err error) {
 	a.RLock()
 	if !a.started {
 		a.RUnlock()
 		err = errors.New("getting mongo client failed service is not started or shutdown")
 		return
-	} else if a.mongoClient != nil {
-		client = a.mongoClient
+	} else if a.mongoClientFastestReads != nil {
+		client = a.mongoClientFastestReads
 		a.RUnlock()
 		return
 	} else {
 		a.RUnlock()
 	}
 
-	client, err = a.connect(ctx)
+	client, err = a.connectReadNearest(ctx)
 	return
 }
 
-func (a *DataStore) connect(clientCtx context.Context) (client *mongo.Client, err error) {
+func (a *DataStore) connectReadNearest(clientCtx context.Context) (client *mongo.Client, err error) {
 	a.Lock()
 	defer a.Unlock()
 
-	if a.mongoClient != nil {
-		client = a.mongoClient
+	if a.mongoClientFastestReads != nil {
+		client = a.mongoClientFastestReads
 		return
 	}
 
@@ -737,13 +805,61 @@ func (a *DataStore) connect(clientCtx context.Context) (client *mongo.Client, er
 		err = errors.Wrap(err, "error connecting to mongo")
 		return
 	}
+	a.mongoClientFastestReads = client
+
+	task.LogInfo(taskName, "connected to mongo")
+	return
+}
+
+func (a *DataStore) clientLinearWriteRead(ctx context.Context) (client *mongo.Client, err error) {
+	a.RLock()
+	if !a.started {
+		a.RUnlock()
+		err = errors.New("getting mongo client failed service is not started or shutdown")
+		return
+	} else if a.mongoClient != nil {
+		client = a.mongoClient
+		a.RUnlock()
+		return
+	} else {
+		a.RUnlock()
+	}
+
+	client, err = a.connectLinearWriteRead(ctx)
+	return
+}
+
+func (a *DataStore) connectLinearWriteRead(clientCtx context.Context) (client *mongo.Client, err error) {
+	a.Lock()
+	defer a.Unlock()
+
+	if a.mongoClient != nil {
+		client = a.mongoClient
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(clientCtx, time.Duration(a.options.connectTimeoutSeconds)*time.Second)
+	defer cancel()
+
+	task.LogInfo(taskName, "connecting to mongo")
+
+	clientOptions := a.standardOptions()
+	clientOptions.SetReadConcern(readconcern.Majority())
+	clientOptions.SetReadPreference(readpref.Primary()) // connect primary for reads or linear reads in same go routine will some times fail to find documents you just inserted in same routine
+	clientOptions.SetWriteConcern(writeconcern.New(writeconcern.J(true), writeconcern.WMajority(), writeconcern.WTimeout(a.queryTimeout())))
+
+	client, err = mongo.Connect(ctx, clientOptions)
+	if err != nil {
+		err = errors.Wrap(err, "error connecting to mongo")
+		return
+	}
 	a.mongoClient = client
 
 	task.LogInfo(taskName, "connected to mongo")
 	return
 }
 
-func (a *DataStore) clientUnsafeFast(ctx context.Context) (client *mongo.Client, err error) {
+func (a *DataStore) clientUnsafeFastWrites(ctx context.Context) (client *mongo.Client, err error) {
 	a.RLock()
 	if !a.started {
 		a.RUnlock()
@@ -757,11 +873,11 @@ func (a *DataStore) clientUnsafeFast(ctx context.Context) (client *mongo.Client,
 		a.RUnlock()
 	}
 
-	client, err = a.connectUnsafeFast(ctx)
+	client, err = a.connectUnsafeFastWrites(ctx)
 	return
 }
 
-func (a *DataStore) connectUnsafeFast(clientCtx context.Context) (client *mongo.Client, err error) {
+func (a *DataStore) connectUnsafeFastWrites(clientCtx context.Context) (client *mongo.Client, err error) {
 	a.Lock()
 	defer a.Unlock()
 
