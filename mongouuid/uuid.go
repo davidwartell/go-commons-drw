@@ -97,6 +97,13 @@ func UUIDFromString(s string) (UUID, error) {
 	}, nil
 }
 
+func (g UUID) Clone() (clone UUID) {
+	for i, b := range g.id {
+		clone.id[i] = b
+	}
+	return
+}
+
 func (g UUID) MarshalJSON() ([]byte, error) {
 	return []byte("\"" + g.id.Hex() + "\""), nil
 }
