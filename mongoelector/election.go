@@ -44,10 +44,10 @@ const defaultLeaderTTLSeconds = 2 * defaultLeaderHeartbeatSeconds
 var contextCancelledError = errors.New("context cancelled")
 
 type LeaderWorker interface {
-	// Start the worker. May be called multiple times in a row.
+	// Start the worker and return. You are responsible for managing your own go routine. May be called multiple times in a row.
 	Start(ctx context.Context)
 
-	// Stop the worker. May be called multiple times in a row.
+	// Stop the worker and return. You are responsible for managing your own go routine. May be called multiple times in a row.
 	Stop()
 }
 
