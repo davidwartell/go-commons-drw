@@ -147,9 +147,5 @@ func (s *Service) Equal(x *Service) bool {
 	}
 
 	// reflect.DeepEqual should work with Service because there are no pointers in the data structure
-	if !reflect.DeepEqual(s, x) {
-		return false
-	}
-
-	return true
+	return reflect.DeepEqual(s, x)
 }

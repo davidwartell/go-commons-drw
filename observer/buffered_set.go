@@ -43,7 +43,7 @@ type BufferedSetObserver struct {
 
 	bufferEventsLock sync.Mutex // protects bufferEvents, bufferReceived
 	bufferEvents     map[string]struct{}
-	bufferReceieved  uint64 // number of events including duplicates sent to the current buffer since last flush
+	bufferReceived   uint64 // number of events including duplicates sent to the current buffer since last flush
 }
 
 // NewBufferedSetObserver
@@ -52,10 +52,10 @@ type BufferedSetObserver struct {
 func NewBufferedSetObserver(bufferDuration time.Duration) *BufferedSetObserver {
 	eventsChan := make(chan string)
 	obs := &BufferedSetObserver{
-		events:          eventsChan,
-		bufferDuration:  bufferDuration,
-		bufferEvents:    make(map[string]struct{}),
-		bufferReceieved: 0,
+		events:         eventsChan,
+		bufferDuration: bufferDuration,
+		bufferEvents:   make(map[string]struct{}),
+		bufferReceived: 0,
 	}
 	obs.ctx, obs.cancel = context.WithCancel(context.Background())
 	obs.eventLoop(eventsChan)
@@ -146,8 +146,8 @@ func (o *BufferedSetObserver) handleEvent(event string) {
 	// Add new event to the event buffer.
 	o.bufferEventsLock.Lock()
 	o.bufferEvents[event] = struct{}{}
-	o.bufferReceieved++
-	isFirstEvent := o.bufferReceieved == 1
+	o.bufferReceived++
+	isFirstEvent := o.bufferReceived == 1
 	o.bufferEventsLock.Unlock()
 
 	// If this is the first event, set a timeout function.
@@ -169,7 +169,7 @@ func (o *BufferedSetObserver) handleEvent(event string) {
 
 					// Reset events buffer.
 					o.bufferEvents = make(map[string]struct{})
-					o.bufferReceieved = 0
+					o.bufferReceived = 0
 
 					o.bufferEventsLock.Unlock()
 					return

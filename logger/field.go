@@ -226,10 +226,12 @@ func Namespace(key string) Field { return Field(zap.Namespace(key)) }
 
 // Stringer constructs a field with the given key and the output of the value's
 // String method. The Stringer's String method is called lazily.
+//goland:noinspection GoUnusedExportedFunction
 func Stringer(key string, val fmt.Stringer) Field { return Field(zap.Stringer(key, val)) }
 
 // Time constructs a Field with the given key and value. The encoder
 // controls how the time is serialized.
+//goland:noinspection GoUnusedExportedFunction
 func Time(key string, val time.Time) Field { return Field(zap.Time(key, val)) }
 
 // Timep constructs a field that carries a *time.Time. The returned Field will safely
@@ -241,6 +243,7 @@ func Timep(key string, val *time.Time) Field { return Field(zap.Timep(key, val))
 // under provided key. Keep in mind that taking a stacktrace is eager and
 // expensive (relatively speaking); this function both makes an allocation and
 // takes about two microseconds.
+//goland:noinspection GoUnusedExportedFunction
 func Stack(key string) Field { return Field(zap.Stack(key)) }
 
 // StackSkip constructs a field similarly to Stack, but also skips the given

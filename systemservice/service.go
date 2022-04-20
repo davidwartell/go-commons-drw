@@ -18,6 +18,7 @@
 package systemservice
 
 import (
+	"fmt"
 	"github.com/davidwartell/go-commons-drw"
 	"github.com/davidwartell/go-commons-drw/logger"
 	"github.com/pkg/errors"
@@ -60,6 +61,7 @@ type Params struct {
 	WindowsParams            WindowsParams
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func NewSystemService(params *Params, serviceInterface service.Interface) *SystemService {
 	return &SystemService{
 		params:           params,
@@ -103,8 +105,7 @@ func (s *SystemService) Uninstall() error {
 	s.Lock()
 	defer s.Unlock()
 
-	var err error
-	err = s.uninstallSystemService()
+	err := s.uninstallSystemService()
 	if err != nil {
 		return err
 	}
@@ -115,8 +116,7 @@ func (s *SystemService) Start() error {
 	s.Lock()
 	defer s.Unlock()
 
-	var err error
-	err = s.startSystemService()
+	err := s.startSystemService()
 	if err != nil {
 		return err
 	}
@@ -127,9 +127,7 @@ func (s *SystemService) Stop() error {
 	s.Lock()
 	defer s.Unlock()
 
-	var err error
-
-	err = s.stopSystemService()
+	err := s.stopSystemService()
 	if err != nil {
 		return err
 	}
@@ -173,9 +171,9 @@ func (s *SystemService) stopSystemService() (err error) {
 		if err != nil {
 			return
 		}
-		logger.Instance().InfofUnstruct("%s stopped", s.params.ServiceCommonName)
+		logger.Instance().Info(fmt.Sprintf("%s stopped", s.params.ServiceCommonName), logger.String("service", s.params.ServiceCommonName))
 	} else {
-		logger.Instance().InfofUnstruct("%s already stopped", s.params.ServiceCommonName)
+		logger.Instance().Info(fmt.Sprintf("%s already stopped", s.params.ServiceCommonName), logger.String("service", s.params.ServiceCommonName))
 	}
 
 	return
@@ -193,13 +191,13 @@ func (s *SystemService) uninstallSystemService() (err error) {
 
 	// on windows have to stop first or the delete does not actually take place until its stopped
 	_ = srvc.Stop()
-	logger.Instance().InfofUnstruct("%s stopped", s.params.ServiceCommonName)
+	logger.Instance().Info(fmt.Sprintf("%s stopped", s.params.ServiceCommonName), logger.String("service", s.params.ServiceCommonName))
 
 	err = srvc.Uninstall()
 	if err != nil {
 		return
 	}
-	logger.Instance().InfofUnstruct("%s uninstalled", s.params.ServiceCommonName)
+	logger.Instance().Info(fmt.Sprintf("%s uninstalled", s.params.ServiceCommonName), logger.String("service", s.params.ServiceCommonName))
 	return
 }
 
@@ -224,9 +222,9 @@ func (s *SystemService) startSystemService() (err error) {
 		if err != nil {
 			return
 		}
-		logger.Instance().InfofUnstruct("%s started", s.params.ServiceCommonName)
+		logger.Instance().Info(fmt.Sprintf("%s started", s.params.ServiceCommonName), logger.String("service", s.params.ServiceCommonName))
 	} else {
-		logger.Instance().InfofUnstruct("%s already started", s.params.ServiceCommonName)
+		logger.Instance().Info(fmt.Sprintf("%s already started", s.params.ServiceCommonName), logger.String("service", s.params.ServiceCommonName))
 	}
 
 	return
@@ -244,8 +242,12 @@ func (s *SystemService) execPath() (workingDir string, executablePath string, er
 	executablePath = filepath.Join(workingDir, s.params.ExecutableFileName)
 
 	if !commons.FileExists(executablePath) {
+		logger.Instance().Error(fmt.Sprintf(
+			"error starting service %s executable file not found", s.params.ServiceCommonName),
+			logger.String("service", s.params.ServiceCommonName),
+			logger.String("executablePath", executablePath),
+		)
 		err = errors.Errorf("error starting %s file (%s) not found", s.params.ServiceCommonName, executablePath)
-		logger.Instance().ErrorUnstruct(err)
 	}
 
 	return

@@ -39,6 +39,11 @@ gosec:
 clean:
 	$(GO_CLEAN)
 
+# FIXME remove exclude for "-D staticcheck" when deprecated logging API usage is fixed
+.PHONY: golint
+golint:
+	golangci-lint run -D govet -D staticcheck
+
 GO_MODULES += "go.uber.org/zap"
 GO_MODULES += "golang.org/x/sync/semaphore"
 GO_MODULES += "google.golang.org/grpc/codes"

@@ -132,9 +132,8 @@ func (p *httpProxyImpl) HttpConnectionString() string {
 func (p *httpProxyImpl) HttpConnectionUrl() (proxyUrl *url.URL, err error) {
 	proxyUrl, err = url.ParseRequestURI(p.HttpConnectionString())
 	if err != nil {
-		err2 := errors.Errorf("error parsing proxy url %s: %v", p.HttpConnectionString(), err)
-		logger.Instance().ErrorUnstruct(err2)
-		err = err2
+		logger.Instance().Error("error parsing proxy url", logger.String("httpConnectionString", p.HttpConnectionString()), logger.Error(err))
+		err = errors.Wrapf(err, "error parsing proxy url %s", p.HttpConnectionString())
 	}
 	return
 }
@@ -148,7 +147,7 @@ func (p *httpProxyImpl) Shutdown() {
 	proxyShutdownCtx, proxyShutdownCancel := context.WithTimeout(context.Background(), time.Second*1)
 	defer proxyShutdownCancel()
 	if err := p.server.Shutdown(proxyShutdownCtx); err != nil {
-		logger.Instance().ErrorfUnstruct("error stopping proxy http server: %s", err)
+		logger.Instance().Error("error stopping proxy http server", logger.Error(err))
 	}
 	p.running = false // even if we failed to shutdown assume its a bad state
 }
@@ -188,9 +187,9 @@ func (p *httpProxyImpl) Get(
 	var httpReq *http.Request
 	httpReq, err = http.NewRequest("GET", requestUrl, nil)
 	if err != nil {
-		err2 := errors.Errorf("error on http.NewRequest for url %s: %v", requestUrl, err)
-		logger.Instance().ErrorUnstruct(err2)
-		return nil, false, err2
+		logger.Instance().Error("error on http.NewRequest for url", logger.String("requestUrl", requestUrl), logger.Error(err))
+		err = errors.Wrapf(err, "error on http.NewRequest for url %s", requestUrl)
+		return nil, false, err
 	}
 	httpReq.WithContext(ctx)
 	httpReq.Header.Set("User-Agent", userAgent)
@@ -203,15 +202,16 @@ func (p *httpProxyImpl) Get(
 		transportWrapper := p.transportWrapper
 		p.RUnlock()
 		dialError = transportWrapper.DialError()
-		err2 := errors.Errorf("error on http request for url %s: %v", requestUrl, err)
 		if !dialError {
-			logger.Instance().InfoUnstruct(err2)
+			logger.Instance().Error("error on http request for url", logger.String("requestUrl", requestUrl), logger.Error(err))
 		}
-		return nil, dialError, err2
+		err = errors.Wrapf(err, "error on http request for url %s", requestUrl)
+		return nil, dialError, err
 	}
 	return httpResponse, false, nil
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func NewHttpProxy(
 	ctx context.Context,
 	addr net.Addr,
@@ -231,7 +231,7 @@ func NewHttpProxy(
 	listenConfig := &net.ListenConfig{}
 	httpProxy.listener, err = listenConfig.Listen(ctx, "tcp", proxyListenAddr)
 	if err != nil {
-		logger.Instance().ErrorUnstruct(err)
+		logger.Instance().Error("error starting proxy listener", logger.Error(err))
 		return nil, err
 	}
 	httpProxy.server = &http.Server{

@@ -49,6 +49,7 @@ func (l *Mutex) Unlock() {
 	l.sem.Release(1)
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func NewMutex() Mutex {
 	return Mutex{
 		sem: semaphore.NewWeighted(1),

@@ -30,7 +30,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/x/bsonx"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -99,6 +98,7 @@ type ElectorStatus struct {
 	ElectedLeader *ElectedLeader `json:"electedLeader"`
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func NewElectorOptions() ElectorOptions {
 	return ElectorOptions{
 		LeaderTTLSeconds:       defaultLeaderTTLSeconds,
@@ -114,6 +114,7 @@ func NewElectorOptions() ElectorOptions {
 // followerWorker - followerWorker.Start() is called when this instance loses an election.  followerWorker.Stop() is called when this instance wins an election
 // thisInstanceLeaderHostname - a hostname that will be passed to followers they can use to connect to a service on the leader, can be empty
 // thisInstanceLeaderPort - a port that will be passed to followers they can use to connect to a service on the leader, can be empty
+//goland:noinspection GoUnusedExportedFunction
 func NewElector(
 	ctx context.Context,
 	database *mongostore.DataStore,
@@ -174,7 +175,7 @@ func (e *Elector) Stop() {
 		e.cancel()
 	}
 	e.wg.Wait()
-	logger.Instance().InfofUnstruct(e.getLogPrefix("stopped"))
+	logger.Instance().Info(e.getLogPrefix("stopped"))
 }
 
 func (e *Elector) Status() (status *ElectorStatus) {
@@ -205,8 +206,7 @@ expireWorkerLoop:
 		if !indexEnsured {
 			ok := e.database.AddAndEnsureManagedIndexes(e.ctx, ManagedIndexes)
 			if !ok {
-				err := errors.New("error ensuring indexes")
-				logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err)
+				logger.Instance().Error(e.getLogPrefix("error ensuring indexes"), logger.Stack("stacktrace"))
 				continue
 			} else {
 				indexEnsured = true
@@ -217,7 +217,7 @@ expireWorkerLoop:
 		var collection *mongo.Collection
 		collection, err = mongostore.Instance().CollectionLinearWriteRead(e.ctx, collectionName)
 		if err != nil {
-			logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err)
+			logger.Instance().Error(e.getLogPrefix("error"), logger.Error(err))
 			continue
 		}
 
@@ -228,8 +228,7 @@ expireWorkerLoop:
 		_, err = collection.DeleteOne(ctx, filter)
 		cancel()
 		if err != nil {
-			err2 := errors.Wrapf(err, "error on DeleteOne for expireWorker: %v", err)
-			logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err2)
+			logger.Instance().Error(e.getLogPrefix("error on DeleteOne for expireWorker"), logger.Error(err))
 			continue
 		}
 
@@ -241,8 +240,7 @@ expireWorkerLoop:
 		cancel()
 		if err != nil {
 			if err != mongo.ErrNoDocuments {
-				err2 := errors.Wrapf(err, "error on FindOne for expireWorker: %v", err)
-				logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err2)
+				logger.Instance().Error(e.getLogPrefix("error on FindOne for expireWorker"), logger.Error(err))
 			}
 			select {
 			case <-time.After(time.Millisecond * time.Duration(250)):
@@ -263,7 +261,6 @@ func (e *Elector) followerLeaderWatch() {
 	case <-e.ctx.Done():
 		break
 	}
-	return
 }
 
 // elect
@@ -276,8 +273,7 @@ func (e *Elector) followerLeaderWatch() {
 //		2) watch for deletes to the collection and if the leader for our e.boundary is deleted run election
 func (e *Elector) elect() {
 	defer e.wg.Done()
-	logger.Instance().InfofUnstruct(e.getLogPrefix("started with hostname %s:%s"), e.thisInstanceLeaderHostname, strconv.FormatUint(e.thisInstanceLeaderPort, 10))
-
+	logger.Instance().Info(e.getLogPrefix("started"), logger.String("hostname", e.thisInstanceLeaderHostname), logger.Uint64("port", e.thisInstanceLeaderPort))
 	for {
 		// check context cancelled
 		if e.ctx.Err() != nil {
@@ -297,7 +293,7 @@ func (e *Elector) elect() {
 				e.followerWorker.Start(e.ctx, e.electedLeader, e.thisLeaderUUID)
 			}
 			e.leaderHeartbeat()
-			logger.Instance().InfofUnstruct(e.getLogPrefix("leadership lost"))
+			logger.Instance().Info(e.getLogPrefix("leadership lost"))
 		} else {
 			if e.followerWorker != nil {
 				e.followerWorker.Start(e.ctx, e.electedLeader, e.thisLeaderUUID)
@@ -308,7 +304,6 @@ func (e *Elector) elect() {
 	}
 
 	e.stopWorkers()
-	return
 }
 
 // leaderHeartbeat update ttlExpire to keep leadership. Return if leadership lost, context cancelled, or operations on mongo fail.
@@ -323,7 +318,7 @@ func (e *Elector) leaderHeartbeat() {
 		// get a collection, if fail wait and try again
 		collection, err := mongostore.Instance().CollectionLinearWriteRead(e.ctx, collectionName)
 		if err != nil {
-			logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err)
+			logger.Instance().Error(e.getLogPrefix("error getting mongo collection"), logger.Error(err))
 			return
 		}
 
@@ -342,8 +337,7 @@ func (e *Elector) leaderHeartbeat() {
 		updateResult, err = collection.UpdateOne(ctx, queueInsertFilter, queueUpdateOnInsert)
 		cancel()
 		if err != nil {
-			err2 := errors.Wrapf(err, "error on UpdateOne for leaderHeartbeat: %v", err)
-			logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err2)
+			logger.Instance().Error(e.getLogPrefix("error on UpdateOne for leaderHeartbeat"), logger.Error(err))
 			return
 		}
 		if updateResult == nil || updateResult.MatchedCount == 0 {
@@ -389,7 +383,8 @@ func (e *Elector) tryWinElection() (won bool, err error) {
 	var collection *mongo.Collection
 	collection, err = mongostore.Instance().CollectionLinearWriteRead(e.ctx, collectionName)
 	if err != nil {
-		logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err)
+		logger.Instance().Error(e.getLogPrefix("error getting mongo collection"), logger.Error(err))
+		err = errors.Wrap(err, "error getting mongo collection")
 		return false, err
 	}
 
@@ -406,15 +401,15 @@ func (e *Elector) tryWinElection() (won bool, err error) {
 	insertResult, err = collection.InsertOne(ctx, thisLeader)
 	cancel()
 	if err != nil && !mongostore.IsDuplicateKeyError(err) {
-		err2 := errors.Wrapf(err, "error on InsertOne for tryWinElection: %v", err)
-		logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err2)
-		return false, err2
+		logger.Instance().Error(e.getLogPrefix("error on InsertOne for tryWinElection"), logger.Error(err))
+		err = errors.Wrap(err, "error on InsertOne for tryWinElection")
+		return false, err
 	} else if err == nil && insertResult != nil && insertResult.InsertedID != nil {
 		e.setElectedLeader(thisLeader)
-		logger.Instance().InfofUnstruct(e.getLogPrefix("election won"))
+		logger.Instance().Info(e.getLogPrefix("election won"))
 		return true, nil
 	} else {
-		logger.Instance().InfofUnstruct(e.getLogPrefix("election lost"))
+		logger.Instance().Info(e.getLogPrefix("election lost"))
 		newLeader := &ElectedLeader{}
 		filter := bson.M{}
 		filter["_id"] = e.boundary
@@ -426,9 +421,9 @@ func (e *Elector) tryWinElection() (won bool, err error) {
 			if err == mongo.ErrNoDocuments {
 				return false, mongo.ErrNoDocuments
 			}
-			err2 := errors.Wrapf(err, "error on FindOne for tryWinElection: %v", err)
-			logger.Instance().ErrorfUnstruct(e.getLogPrefix("error: %v"), err2)
-			return false, err2
+			logger.Instance().Error(e.getLogPrefix("error on FindOne for tryWinElection"), logger.Error(err))
+			err = errors.Wrapf(err, "error on FindOne for tryWinElection")
+			return false, err
 		}
 		e.setElectedLeader(newLeader)
 		return false, nil
@@ -442,7 +437,11 @@ func (e *Elector) stopWorkers() {
 		go func() {
 			defer func() {
 				if err := recover(); err != nil {
-					logger.Instance().ErrorfUnstruct("panic occurred during stopWorkers: %v stacktrace from panic: %s", err, string(debug.Stack()))
+					logger.Instance().Error(
+						e.getLogPrefix("panic occurred during stop follower worker"),
+						logger.Any("error", err),
+						logger.String("stacktrace", string(debug.Stack())),
+					)
 				}
 			}()
 			e.followerWorker.Stop()
@@ -454,7 +453,11 @@ func (e *Elector) stopWorkers() {
 		go func() {
 			defer func() {
 				if err := recover(); err != nil {
-					logger.Instance().ErrorfUnstruct("panic occurred during stopWorkers: %v stacktrace from panic: %s", err, string(debug.Stack()))
+					logger.Instance().Error(
+						e.getLogPrefix("panic occurred during stop leader worker"),
+						logger.Any("error", err),
+						logger.String("stacktrace", string(debug.Stack())),
+					)
 				}
 			}()
 			e.leaderWorker.Stop()

@@ -64,8 +64,8 @@ const (
 	// FatalLevel logs a message, then calls os.Exit(1).
 	FatalLevel
 
-	_minLevel = DebugLevel
-	_maxLevel = FatalLevel
+	//_minLevel = DebugLevel
+	//_maxLevel = FatalLevel
 
 	DefaultAppShortName = "hello-world"
 	taskName            = "Logging Service"
@@ -95,6 +95,7 @@ var once sync.Once
 
 // WithProductNameShort sets the name of your product used in log file names.
 // example: logger.Instance().StartTask(logger.WithProductNameShort("your-product-name-here"))
+//goland:noinspection GoUnusedExportedFunction
 func WithProductNameShort(productNameShort string) LoggingOption {
 	return func(o *Options) {
 		o.productNameShort = productNameShort
@@ -174,7 +175,7 @@ func (s *Singleton) StartTask(opts ...LoggingOption) {
 
 	s.started = true
 	s.Unlock()
-	s.InfoUnstruct(getTaskLogPrefix(taskName, "started"))
+	s.Info(getTaskLogPrefix(taskName, "started"))
 }
 
 func (s *Singleton) Sync() {
@@ -195,7 +196,7 @@ func (s *Singleton) StopTask() {
 	s.started = false
 	s.Unlock()
 	s.Sync()
-	s.InfoUnstruct(getTaskLogPrefix(taskName, "stopped"))
+	s.Info(getTaskLogPrefix(taskName, "stopped"))
 }
 
 func Instance() *Singleton {

@@ -42,6 +42,7 @@ type MutualTLSFactory struct {
 // PingFunc should send a GRPC ping/pong to the other side of conn.  Returns err or latency.
 type PingFunc func(ctx context.Context, conn *grpc.ClientConn) (time.Duration, error)
 
+//goland:noinspection GoUnusedExportedFunction
 func NewMutualTLSFactory(
 	caCertPEM []byte,
 	clientCertPEM []byte,
@@ -59,7 +60,7 @@ func NewMutualTLSFactory(
 	}
 	factory.credentials, err = LoadTLSCredentials(caCertPEM, clientCertPEM, clientKeyPEM)
 	if err != nil {
-		logger.Instance().ErrorfUnstruct("error loading TLS credentials: %s", err)
+		logger.Instance().Error("error loading TLS credentials", logger.Error(err))
 		return factory, err
 	}
 
@@ -83,7 +84,7 @@ func (f MutualTLSFactory) NewConnection(ctx context.Context) (*grpc.ClientConn, 
 		if conn != nil {
 			_ = conn.Close()
 		}
-		logger.Instance().InfofUnstruct("failed to dial: %s (%v)", f.dialAddr, err)
+		logger.Instance().Info("failed to dial", logger.String("dialAddr", f.dialAddr), logger.Error(err))
 		return nil, err
 	}
 
@@ -92,9 +93,9 @@ func (f MutualTLSFactory) NewConnection(ctx context.Context) (*grpc.ClientConn, 
 		if conn != nil {
 			_ = conn.Close()
 		}
-		err2 := errors.Errorf("failed to ping %s: %v", f.dialAddr, err)
-		logger.Instance().InfoUnstruct(err2)
-		return nil, err2
+		logger.Instance().Info("failed to pin", logger.String("dialAddr", f.dialAddr), logger.Error(err))
+		err = errors.Wrapf(err, "failed to ping %s", f.dialAddr)
+		return nil, err
 	}
 
 	return conn, nil

@@ -53,6 +53,7 @@ type ClientConn struct {
 var ErrClientConnClosing = status.Error(codes.Canceled, "grpc: the client connection is closing")
 var ErrClientConnNotOk = status.Error(codes.Unavailable, "grpc: error - connection not ok")
 
+//goland:noinspection GoUnusedExportedFunction
 func New(factory grpcpool.ConnectionFactory, idleTimeout time.Duration) *Pool {
 	if idleTimeout < idleWatchDogWakeupSeconds {
 		idleTimeout = idleWatchDogWakeupSeconds
@@ -97,7 +98,7 @@ func (p *Pool) watchDog(ctx context.Context, wg *sync.WaitGroup) {
 		select {
 		case <-time.After(time.Second * idleWatchDogWakeupSeconds):
 		case <-ctx.Done():
-			logger.Instance().TraceUnstruct("pool.watchDog exiting")
+			logger.Instance().Trace("pool.watchDog exiting")
 			wg.Done()
 			return
 		}
@@ -107,7 +108,7 @@ func (p *Pool) watchDog(ctx context.Context, wg *sync.WaitGroup) {
 func (p *Pool) checkIdleConnection() {
 	p.Lock()
 	defer p.Unlock()
-	logger.Instance().TraceUnstruct("pool.watchDog checking idle connections")
+	logger.Instance().Trace("pool.watchDog checking idle connections")
 	if p.conn == nil {
 		return
 	}
@@ -117,7 +118,7 @@ func (p *Pool) checkIdleConnection() {
 	if p.timeIdleStart.Add(p.idleTimeout).Before(time.Now()) {
 		_ = p.conn.Close()
 		p.conn = nil
-		logger.Instance().TraceUnstruct("Connection Idle Closed")
+		logger.Instance().Trace("Connection Idle Closed")
 	}
 }
 
@@ -136,27 +137,27 @@ func (p *Pool) Get(ctx context.Context) (grpcpool.PoolClientConn, error) {
 			p.conn = nil
 			return nil, err
 		}
-		logger.Instance().TraceUnstruct("Opened New Connection from Factory")
+		logger.Instance().Trace("Opened New Connection from Factory")
 	} else {
 		// test an existing connection
 		err := p.factory.ConnectionOk(ctx, p.conn)
 		if err != nil {
-			logger.Instance().InfofUnstruct("existing connection not ok closing: %v", err)
+			logger.Instance().Info("existing connection returned error on closing", logger.Error(err))
 			_ = p.conn.Close()
 			p.conn = nil
 
-			logger.Instance().InfoUnstruct("trying to reconnect")
+			logger.Instance().Info("trying to reconnect")
 			var err2 error
 			p.conn, err2 = p.factory.NewConnection(ctx)
 			if err2 != nil {
 				p.conn = nil
-				logger.Instance().InfofUnstruct("reconnect failed: %v", err2)
+				logger.Instance().Error("reconnect failed", logger.Error(err2))
 				return nil, err
 			}
 
 			err3 := p.factory.ConnectionOk(ctx, p.conn)
 			if err3 != nil {
-				logger.Instance().InfofUnstruct("reconnect not ok closing: %v", err3)
+				logger.Instance().Info("reconnect not ok closing", logger.Error(err3))
 				_ = p.conn.Close()
 				p.conn = nil
 				return nil, ErrClientConnNotOk
@@ -171,7 +172,7 @@ func (p *Pool) Get(ctx context.Context) (grpcpool.PoolClientConn, error) {
 	}
 	p.clientCount++
 	p.clientWg.Add(1)
-	logger.Instance().TracefUnstruct("Get connection count=%d", p.clientCount)
+	logger.Instance().Trace("get connection", logger.Uint64("counter", p.clientCount))
 	return &wrapper, nil
 }
 
@@ -188,7 +189,7 @@ func (c *ClientConn) Return() {
 	c.pool.clientWg.Done()
 	c.returned = true
 	c.conn = nil
-	logger.Instance().TracefUnstruct("Return connection count=%d", c.pool.clientCount)
+	logger.Instance().Trace("return connection", logger.Uint64("counter", c.pool.clientCount))
 }
 
 func (c *ClientConn) Connection() *grpc.ClientConn {

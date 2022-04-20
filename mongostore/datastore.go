@@ -17,6 +17,7 @@
 
 package mongostore
 
+//goland:noinspection SpellCheckingInspection
 import (
 	"context"
 	"encoding/binary"
@@ -32,6 +33,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/mongo/writeconcern"
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +50,7 @@ const ASC = 1
 const DESC = -1
 
 var DirtyWriteError = errors.New("dirty write error")
+var ErrorServiceNotStarted = errors.New("getting mongo client failed: service is not started or shutdown")
 
 type DirtyWriteProtectedFunc func() error
 type IndexIdentifier string
@@ -131,14 +134,24 @@ func Instance() *DataStore {
 	return instance
 }
 
+var stringSliceType = reflect.TypeOf([]string{})
+var mongouuidSliceType = reflect.TypeOf([]mongouuid.UUID{})
+
 // TruncateStringSliceForMongoDoc ensures a string slice will fit in the mongodb doc size limit and truncates the slice
 // if necessary logging a warning.
+//goland:noinspection GoUnusedExportedFunction
 func TruncateStringSliceForMongoDoc(slice []string) (newSlice []string) {
 	var sizeOfSlice uint64
 	for index, str := range slice {
 		sizeOfSlice = sizeOfSlice + uint64(utf8.RuneCountInString(str))
 		if sizeOfSlice > MaxSliceSizePerMongoDocument {
-			logger.Instance().WarnfUnstruct("truncating slice of type []string from %d to %d to fit in %d bytes of mongo document", len(slice), index, MaxSliceSizePerMongoDocument)
+			logger.Instance().Warn(
+				"truncating slice to fit in mongo document",
+				logger.String("type", stringSliceType.String()),
+				logger.Int("initialSliceLength", len(slice)),
+				logger.Int("truncatedSliceLength", index),
+				logger.Uint64("maxLengthBytes", MaxSliceSizePerMongoDocument),
+			)
 			newSlice = slice[:index]
 			return
 		}
@@ -149,6 +162,7 @@ func TruncateStringSliceForMongoDoc(slice []string) (newSlice []string) {
 
 // TruncateUUIDSliceForMongoDoc ensures a mongouuid.UUID slice will fit in the mongodb doc size limit and truncates the
 // slice if necessary logging a warning.
+//goland:noinspection GoUnusedExportedFunction
 func TruncateUUIDSliceForMongoDoc(slice []mongouuid.UUID) (newSlice []mongouuid.UUID) {
 	sizeOfUUID := uint64(binary.Size(mongouuid.UUID{}))
 	lenOfSlice := uint64(len(slice))
@@ -156,7 +170,13 @@ func TruncateUUIDSliceForMongoDoc(slice []mongouuid.UUID) (newSlice []mongouuid.
 	if sizeOfSlice > MaxSliceSizePerMongoDocument {
 		allowedLength := MaxSliceSizePerMongoDocument / sizeOfUUID
 		newSlice = slice[:allowedLength]
-		logger.Instance().WarnfUnstruct("truncating slice of type []mongouuid.UUID from %d to %d to fit in %d bytes of mongo document", lenOfSlice, allowedLength, MaxSliceSizePerMongoDocument)
+		logger.Instance().Warn(
+			"truncating slice to fit in mongo document",
+			logger.String("type", mongouuidSliceType.String()),
+			logger.Uint64("initialSliceLength", lenOfSlice),
+			logger.Uint64("truncatedSliceLength", allowedLength),
+			logger.Uint64("maxLengthBytes", MaxSliceSizePerMongoDocument),
+		)
 		return
 	}
 	newSlice = slice
@@ -190,6 +210,7 @@ func TruncateUUIDSliceForMongoDoc(slice []mongouuid.UUID) (newSlice []mongouuid.
 // which will return duplicate key error.
 // In case of no dirty write and no error returned by the UpdateOne() we expect either an insert (updateResult.UpsertedID
 // has a value) or an updated existing document (updateResult.MatchedCount == 1).
+//goland:noinspection GoUnusedExportedFunction
 func CheckForDirtyWriteOnUpsert(updateResult *mongo.UpdateResult, inputErr error) (err error) {
 	if inputErr != nil {
 		if IsDuplicateKeyError(inputErr) {
@@ -234,6 +255,7 @@ func CheckForDirtyWriteOnUpsert(updateResult *mongo.UpdateResult, inputErr error
 //		}
 //		return nil
 //	})
+//goland:noinspection GoUnusedExportedFunction
 func RetryDirtyWrite(dirtyWriteFunc DirtyWriteProtectedFunc) (err error) {
 	var retries uint64
 	maxRetries := uint64(100)
@@ -258,7 +280,7 @@ func (a *DataStore) StartTask(managedIndexes []Index, opts ...DataStoreOption) {
 	if a.started {
 		return
 	}
-	task.LogInfo(taskName, "starting")
+	task.LogInfoStruct(taskName, "starting")
 	a.ctx, a.cancel = context.WithCancel(context.Background())
 
 	for _, opt := range opts {
@@ -274,7 +296,7 @@ func (a *DataStore) StartTask(managedIndexes []Index, opts ...DataStoreOption) {
 	go a.runEnsureIndexes(a.ctx, &a.wg)
 
 	a.started = true
-	task.LogInfo(taskName, "started")
+	task.LogInfoStruct(taskName, "started")
 }
 
 func (a *DataStore) StopTask() {
@@ -285,7 +307,7 @@ func (a *DataStore) StopTask() {
 	}
 	a.Unlock()
 
-	task.LogInfo(taskName, "shutting down")
+	task.LogInfoStruct(taskName, "shutting down")
 
 	a.Lock()
 	if a.cancel != nil {
@@ -316,7 +338,7 @@ func (a *DataStore) StopTask() {
 			defer cancel()
 			err := a.mongoClient.Disconnect(ctx)
 			if err != nil {
-				task.LogErrorf(taskName, "shutdown: error on disconnect of mongo client: %v", err)
+				task.LogErrorStruct(taskName, "shutdown: error on disconnect of mongo client", logger.Error(err))
 			}
 			a.mongoClient = nil
 		}
@@ -333,7 +355,7 @@ func (a *DataStore) StopTask() {
 			defer cancel()
 			err := a.mongoClientUnsafeFast.Disconnect(ctx)
 			if err != nil {
-				task.LogErrorf(taskName, "shutdown: error on disconnect of mongo client: %v", err)
+				task.LogErrorStruct(taskName, "shutdown: error on disconnect of mongo client", logger.Error(err))
 			}
 			a.mongoClientUnsafeFast = nil
 		}
@@ -350,7 +372,7 @@ func (a *DataStore) StopTask() {
 			defer cancel()
 			err := a.mongoClientFastestReads.Disconnect(ctx)
 			if err != nil {
-				task.LogErrorf(taskName, "shutdown: error on disconnect of mongo client: %v", err)
+				task.LogErrorStruct(taskName, "shutdown: error on disconnect of mongo client", logger.Error(err))
 			}
 			a.mongoClientFastestReads = nil
 		}
@@ -358,13 +380,13 @@ func (a *DataStore) StopTask() {
 	disconnectWg.Wait()
 
 	a.started = false
-	task.LogInfo(taskName, "stopped")
+	task.LogInfoStruct(taskName, "stopped")
 }
 
 func (a *DataStore) databaseLinearWriteRead(ctx context.Context) (*mongo.Database, error) {
 	client, err := a.clientLinearWriteRead(ctx)
 	if err != nil {
-		task.LogErrorf(taskName, "error getting collection from client: %v", err)
+		task.LogErrorStruct(taskName, "error getting collection from client", logger.Error(err))
 		return nil, err
 	}
 	a.RLock()
@@ -376,7 +398,7 @@ func (a *DataStore) databaseLinearWriteRead(ctx context.Context) (*mongo.Databas
 func (a *DataStore) databaseUnsafeFastWrites(ctx context.Context) (*mongo.Database, error) {
 	client, err := a.clientUnsafeFastWrites(ctx)
 	if err != nil {
-		task.LogErrorf(taskName, "error getting collection from client: %v", err)
+		task.LogErrorStruct(taskName, "error getting collection from client", logger.Error(err))
 		return nil, err
 	}
 	a.RLock()
@@ -388,7 +410,7 @@ func (a *DataStore) databaseUnsafeFastWrites(ctx context.Context) (*mongo.Databa
 func (a *DataStore) databaseReadNearest(ctx context.Context) (*mongo.Database, error) {
 	client, err := a.clientReadNearest(ctx)
 	if err != nil {
-		task.LogErrorf(taskName, "error getting collection from client: %v", err)
+		task.LogErrorStruct(taskName, "error getting collection from client", logger.Error(err))
 		return nil, err
 	}
 	a.RLock()
@@ -466,7 +488,7 @@ func (a *DataStore) Ping(ctx context.Context) error {
 
 	client, err = a.clientLinearWriteRead(ctx)
 	if err != nil {
-		task.LogErrorf(taskName, "error getting client for ping: %v", err)
+		task.LogErrorStruct(taskName, "error getting client for ping", logger.Error(err))
 		return err
 	}
 
@@ -479,7 +501,7 @@ func (a *DataStore) Ping(ctx context.Context) error {
 	var collection *mongo.Collection
 	collection, err = Instance().CollectionLinearWriteRead(ctx, "ping")
 	if err != nil {
-		task.LogErrorf(taskName, "error getting collection for ping write test: %v", err)
+		task.LogErrorStruct(taskName, "error getting collection for ping write test", logger.Error(err))
 		return err
 	}
 
@@ -508,7 +530,7 @@ func (a *DataStore) queryTimeout() time.Duration {
 
 func (a *DataStore) runPing(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
-	task.LogInfo(taskName, "ping runner started")
+	task.LogInfoStruct(taskName, "ping runner started")
 
 	a.RLock()
 	heartbeatSeconds := a.options.pingHeartbeatSeconds
@@ -517,12 +539,12 @@ func (a *DataStore) runPing(ctx context.Context, wg *sync.WaitGroup) {
 	for {
 		err := a.Ping(ctx)
 		if err != nil {
-			task.LogErrorf(taskName, "mongo ping failed: %v", err)
+			task.LogErrorStruct(taskName, "mongo ping failed", logger.Error(err))
 		}
 		select {
 		case <-time.After(time.Second * time.Duration(heartbeatSeconds)):
 		case <-ctx.Done():
-			task.LogInfo(taskName, "ping runner stopped")
+			task.LogInfoStruct(taskName, "ping runner stopped")
 			return
 		}
 	}
@@ -530,7 +552,7 @@ func (a *DataStore) runPing(ctx context.Context, wg *sync.WaitGroup) {
 
 func (a *DataStore) runEnsureIndexes(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
-	task.LogInfo(taskName, "ensuring indexes")
+	task.LogInfoStruct(taskName, "ensuring indexes")
 
 	a.RLock()
 	maxBackoffSeconds := a.options.maxFailedEnsureIndexesBackoffSeconds
@@ -545,14 +567,14 @@ func (a *DataStore) runEnsureIndexes(ctx context.Context, wg *sync.WaitGroup) {
 	for {
 		okOrNoRetry := a.ensureIndexes(ctx)
 		if !okOrNoRetry {
-			task.LogError(taskName, "error ensuring indexes (will retry)")
+			task.LogErrorStruct(taskName, "error ensuring indexes (will retry)")
 		} else {
 			return
 		}
 		select {
 		case <-time.After(failedConnectBackoff.Duration()):
 		case <-ctx.Done():
-			task.LogInfo(taskName, "ensure index runner stopped before complete")
+			task.LogInfoStruct(taskName, "ensure index runner stopped before complete")
 			return
 		}
 	}
@@ -619,7 +641,7 @@ func (a *DataStore) ensureIndexes(ctx context.Context) (okOrNoRetry bool) {
 
 	err := a.Ping(ctx)
 	if err != nil {
-		task.LogErrorf(taskName, "ensure indexes: mongo ping failed aborting: %v", err)
+		task.LogErrorStruct(taskName, "ensure indexes: mongo ping failed aborting", logger.Error(err))
 		return false
 	}
 
@@ -630,13 +652,13 @@ func (a *DataStore) ensureIndexes(ctx context.Context) (okOrNoRetry bool) {
 	var database *mongo.Database
 	database, err = a.databaseLinearWriteRead(ctx)
 	if err != nil {
-		task.LogErrorf(taskName, "ensure indexes: mongo get database failed aborting: %v", err)
+		task.LogErrorStruct(taskName, "ensure indexes: mongo get database failed aborting", logger.Error(err))
 		return false
 	}
 	var collectionNames []string
 	collectionNames, err = database.ListCollectionNames(ctx, bson.D{})
 	if err != nil {
-		task.LogErrorf(taskName, "ensure indexes: mongo list collection names failed aborting: %v", err)
+		task.LogErrorStruct(taskName, "ensure indexes: mongo list collection names failed aborting", logger.Error(err))
 		return false
 	}
 	for _, colName := range collectionNames {
@@ -658,34 +680,59 @@ CollectionLoop:
 		var collection *mongo.Collection
 		collection, err = Instance().CollectionLinearWriteRead(ctx, collectionName)
 		if err != nil {
-			task.LogErrorf(taskName, "error getting collection %s to list indexes: %v", collectionName, err)
+			task.LogErrorStruct(
+				taskName,
+				"error getting collection to list indexes",
+				logger.String("collectionName", collectionName),
+				logger.Error(err),
+			)
 			continue
 		}
 
 		var cursor *mongo.Cursor
 		cursor, err = collection.Indexes().List(ctx)
 		if err != nil {
-			task.LogErrorf(taskName, "error listing indexes on collection %s: %v", collectionName, err)
+			task.LogErrorStruct(
+				taskName,
+				"error listing indexes on collection",
+				logger.String("collectionName", collectionName),
+				logger.Error(err),
+			)
 			continue
 		}
 		for cursor.Next(ctx) {
 			indexDoc := bsoncore.Document{}
 
 			if err = cursor.Decode(&indexDoc); err != nil {
-				task.LogErrorf(taskName, "error on Decode index document for list indexes cursor on collection %s: %v", collectionName, err)
+				task.LogErrorStruct(
+					taskName,
+					"error on Decode index document for list indexes cursor on collection",
+					logger.String("collectionName", collectionName),
+					logger.Error(err),
+				)
 				_ = cursor.Close(ctx)
 				continue CollectionLoop
 			}
 
 			nameVal, idErr := indexDoc.LookupErr("name")
 			if idErr != nil {
-				task.LogErrorf(taskName, "error on LookupErr of name field in index document for list indexes cursor on collection %s: %v", collectionName, err)
+				task.LogErrorStruct(
+					taskName,
+					"error on LookupErr of name field in index document for list indexes cursor on collection",
+					logger.String("collectionName", collectionName),
+					logger.Error(err),
+				)
 				_ = cursor.Close(ctx)
 				continue CollectionLoop
 			}
 			nameStr, nameStrOk := nameVal.StringValueOK()
 			if !nameStrOk {
-				task.LogErrorf(taskName, "error on StringValueOK of name field in index document for list indexes cursor on collection %s: %v", collectionName, err)
+				task.LogErrorStruct(
+					taskName,
+					"error on StringValueOK of name field in index document for list indexes cursor on collection",
+					logger.String("collectionName", collectionName),
+					logger.Error(err),
+				)
 				_ = cursor.Close(ctx)
 				continue CollectionLoop
 			}
@@ -696,17 +743,39 @@ CollectionLoop:
 
 			if _, ok := collectionMapToindexNameMap[collectionName][nameStr]; !ok {
 				startTime := time.Now()
-				task.LogInfof(taskName, "begin drop index %s.%s", collectionName, nameStr)
+				task.LogInfoStruct(
+					taskName,
+					"begin drop index",
+					logger.String("collectionName", collectionName),
+					logger.String("indexName", nameStr),
+				)
 				_, err = collection.Indexes().DropOne(ctx, nameStr)
 				if err != nil {
-					task.LogErrorf(taskName, "error dropping index %s.%s: %v", collectionName, nameStr, err)
+					task.LogErrorStruct(
+						taskName,
+						"error dropping index",
+						logger.String("collectionName", collectionName),
+						logger.String("indexName", nameStr),
+						logger.Error(err),
+					)
 				} else {
-					task.LogInfof(taskName, "finished drop index %s.%s in %v", collectionName, nameStr, time.Since(startTime))
+					task.LogInfoStruct(
+						taskName,
+						"finished drop index",
+						logger.String("collectionName", collectionName),
+						logger.String("indexName", nameStr),
+						logger.Duration("time", time.Since(startTime)),
+					)
 				}
 			}
 		}
 		if cursor.Err() != nil {
-			task.LogErrorf(taskName, "error on list indexes cursor on collection %s: %v", collectionName, err)
+			task.LogErrorStruct(
+				taskName,
+				"error on list indexes cursor on collection",
+				logger.String("collectionName", collectionName),
+				logger.Error(err),
+			)
 		}
 		if cursor != nil {
 			_ = cursor.Close(ctx)
@@ -714,6 +783,7 @@ CollectionLoop:
 	}
 
 	createIndexOptions := mongooptions.CreateIndexes().SetCommitQuorumMajority()
+
 	//
 	// 3. Attempt to create each index.  If the index already exists create will return and do nothing.
 	//
@@ -727,29 +797,53 @@ CollectionLoop:
 		var collection *mongo.Collection
 		collection, err = Instance().CollectionLinearWriteRead(ctx, idx.CollectionName)
 		if err != nil {
-			task.LogErrorf(taskName, "error getting collection to ensure index %s.%s: %v", idx.CollectionName, idx.Id, err)
+			task.LogErrorStruct(
+				taskName,
+				"error getting collection to ensure index",
+				logger.String("collectionName", idx.CollectionName),
+				logger.String("index.id", idx.Id.String()),
+				logger.Error(err),
+			)
 			continue
 		}
 
 		var nameReturned string
 		startTime := time.Now()
-		task.LogInfof(taskName, "begin ensuring index %s.%s", idx.CollectionName, nameReturned)
+		task.LogInfoStruct(
+			taskName,
+			"begin ensuring index",
+			logger.String("collectionName", idx.CollectionName),
+			logger.String("idxName", idxName),
+		)
 		nameReturned, err = collection.Indexes().CreateOne(ctx, idx.Model, createIndexOptions)
 		if err != nil {
-			task.LogErrorf(taskName, "error ensuring index %s.%s: %v", idx.CollectionName, idxName, err)
+			task.LogErrorStruct(
+				taskName,
+				"error ensuring index",
+				logger.String("collectionName", idx.CollectionName),
+				logger.String("idxName", idxName),
+				logger.Error(err),
+			)
 		} else {
-			task.LogInfof(taskName, "finished ensuring index %s.%s in %v", idx.CollectionName, nameReturned, time.Since(startTime))
+			task.LogInfoStruct(
+				taskName,
+				"finished ensuring index",
+				logger.String("collectionName", idx.CollectionName),
+				logger.String("idxName", nameReturned),
+				logger.Duration("time", time.Since(startTime)),
+			)
 		}
 	}
 
 	return true
 }
 
+//nolint:golint,unused
 func (a *DataStore) unsafeFastClient(ctx context.Context) (client *mongo.Client, err error) {
 	a.RLock()
 	if !a.started {
 		a.RUnlock()
-		err = errors.New("getting mongo client failed service is not started or shutdown")
+		err = ErrorServiceNotStarted
 		return
 	} else if a.mongoClientUnsafeFast != nil {
 		client = a.mongoClientUnsafeFast
@@ -767,7 +861,7 @@ func (a *DataStore) clientReadNearest(ctx context.Context) (client *mongo.Client
 	a.RLock()
 	if !a.started {
 		a.RUnlock()
-		err = errors.New("getting mongo client failed service is not started or shutdown")
+		err = ErrorServiceNotStarted
 		return
 	} else if a.mongoClientFastestReads != nil {
 		client = a.mongoClientFastestReads
@@ -793,7 +887,7 @@ func (a *DataStore) connectReadNearest(clientCtx context.Context) (client *mongo
 	ctx, cancel := context.WithTimeout(clientCtx, time.Duration(a.options.connectTimeoutSeconds)*time.Second)
 	defer cancel()
 
-	task.LogInfo(taskName, "connecting to mongo")
+	task.LogInfoStruct(taskName, "connecting to mongo")
 
 	clientOptions := a.standardOptions()
 	clientOptions.SetReadPreference(readpref.Nearest())
@@ -807,7 +901,7 @@ func (a *DataStore) connectReadNearest(clientCtx context.Context) (client *mongo
 	}
 	a.mongoClientFastestReads = client
 
-	task.LogInfo(taskName, "connected to mongo")
+	task.LogInfoStruct(taskName, "connected to mongo")
 	return
 }
 
@@ -815,7 +909,7 @@ func (a *DataStore) clientLinearWriteRead(ctx context.Context) (client *mongo.Cl
 	a.RLock()
 	if !a.started {
 		a.RUnlock()
-		err = errors.New("getting mongo client failed service is not started or shutdown")
+		err = ErrorServiceNotStarted
 		return
 	} else if a.mongoClient != nil {
 		client = a.mongoClient
@@ -841,7 +935,7 @@ func (a *DataStore) connectLinearWriteRead(clientCtx context.Context) (client *m
 	ctx, cancel := context.WithTimeout(clientCtx, time.Duration(a.options.connectTimeoutSeconds)*time.Second)
 	defer cancel()
 
-	task.LogInfo(taskName, "connecting to mongo")
+	task.LogInfoStruct(taskName, "connecting to mongo")
 
 	clientOptions := a.standardOptions()
 	clientOptions.SetReadConcern(readconcern.Majority())
@@ -855,7 +949,7 @@ func (a *DataStore) connectLinearWriteRead(clientCtx context.Context) (client *m
 	}
 	a.mongoClient = client
 
-	task.LogInfo(taskName, "connected to mongo")
+	task.LogInfoStruct(taskName, "connected to mongo")
 	return
 }
 
@@ -863,7 +957,7 @@ func (a *DataStore) clientUnsafeFastWrites(ctx context.Context) (client *mongo.C
 	a.RLock()
 	if !a.started {
 		a.RUnlock()
-		err = errors.New("getting mongo client failed service is not started or shutdown")
+		err = ErrorServiceNotStarted
 		return
 	} else if a.mongoClientUnsafeFast != nil {
 		client = a.mongoClientUnsafeFast
@@ -889,7 +983,7 @@ func (a *DataStore) connectUnsafeFastWrites(clientCtx context.Context) (client *
 	ctx, cancel := context.WithTimeout(clientCtx, time.Duration(a.options.connectTimeoutSeconds)*time.Second)
 	defer cancel()
 
-	task.LogInfo(taskName, "connecting to mongo for unsafe/fast operations")
+	task.LogInfoStruct(taskName, "connecting to mongo for unsafe/fast operations")
 
 	clientOptions := a.standardOptions()
 	clientOptions.SetReadPreference(readpref.Nearest())
@@ -903,7 +997,7 @@ func (a *DataStore) connectUnsafeFastWrites(clientCtx context.Context) (client *
 	}
 	a.mongoClientUnsafeFast = client
 
-	task.LogInfo(taskName, "connected to mongo")
+	task.LogInfoStruct(taskName, "connected to mongo")
 	return
 }
 
@@ -934,66 +1028,77 @@ func (idx Index) MongoIndexName() string {
 	return sb.String()
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func WithDatabaseName(databaseName string) DataStoreOption {
 	return func(o *Options) {
 		o.databaseName = databaseName
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func WithTimeoutSecondsShutdown(timeoutSecondsShutdown uint64) DataStoreOption {
 	return func(o *Options) {
 		o.timeoutSecondsShutdown = timeoutSecondsShutdown
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func WithTimeoutSecondsQuery(timeoutSecondsQuery uint64) DataStoreOption {
 	return func(o *Options) {
 		o.timeoutSecondsQuery = timeoutSecondsQuery
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func WithPingHeartbeatSeconds(pingHeartbeatSeconds uint64) DataStoreOption {
 	return func(o *Options) {
 		o.pingHeartbeatSeconds = pingHeartbeatSeconds
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func WithMaxFailedEnsureIndexesBackoffSeconds(maxFailedEnsureIndexesBackoffSeconds uint64) DataStoreOption {
 	return func(o *Options) {
 		o.maxFailedEnsureIndexesBackoffSeconds = maxFailedEnsureIndexesBackoffSeconds
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func WithHosts(hosts []string) DataStoreOption {
 	return func(o *Options) {
 		o.hosts = hosts
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func WithUsername(username string) DataStoreOption {
 	return func(o *Options) {
 		o.username = username
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func WithPassword(password string) DataStoreOption {
 	return func(o *Options) {
 		o.password = password
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func WithMaxPoolSize(maxPoolSize uint64) DataStoreOption {
 	return func(o *Options) {
 		o.maxPoolSize = maxPoolSize
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func WithConnectTimeoutSeconds(connectTimeoutSeconds uint64) DataStoreOption {
 	return func(o *Options) {
 		o.connectTimeoutSeconds = connectTimeoutSeconds
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func IsDuplicateKeyError(err error) bool {
 	if err == nil {
 		return false

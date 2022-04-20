@@ -49,6 +49,7 @@ func NewUUID() *UUID {
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func MakeUUID() UUID {
 	return UUID{
 		id: primitive.NewObjectID(),
@@ -59,12 +60,14 @@ func (g *UUID) SetUUID(i *UUID) {
 	g.id = i.id
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func UUIDFromObjectId(oid primitive.ObjectID) UUID {
 	return UUID{
 		id: oid,
 	}
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func UUIDPointerSliceToSlice(inputSlice []*UUID) (outputSlice []UUID) {
 	outputSlice = make([]UUID, len(inputSlice))
 	for i, ptr := range inputSlice {
@@ -73,11 +76,11 @@ func UUIDPointerSliceToSlice(inputSlice []*UUID) (outputSlice []UUID) {
 	return
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func UUIDSliceToPointerSlice(inputSlice []UUID) (outputSlice []*UUID) {
 	outputSlice = make([]*UUID, len(inputSlice))
 	for i, ptr := range inputSlice {
-		var uuid UUID
-		uuid = ptr
+		uuid := ptr
 		outputSlice[i] = &uuid
 	}
 	return
@@ -137,8 +140,5 @@ func (g UUID) MarshalBSONValue() (bsontype.Type, []byte, error) {
 }
 
 func (g UUID) Equal(x UUID) bool {
-	if g.id.Hex() != x.id.Hex() {
-		return false
-	}
-	return true
+	return g.id.Hex() == x.id.Hex()
 }

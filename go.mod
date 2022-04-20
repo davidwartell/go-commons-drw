@@ -3,7 +3,7 @@ module github.com/davidwartell/go-commons-drw
 go 1.17
 
 require (
-	github.com/elazarl/goproxy v0.0.0-20220403042543-a53172b9392e
+	github.com/elazarl/goproxy v0.0.0-20220417044921-416226498f94
 	github.com/google/go-cmp v0.5.7
 	github.com/jpillora/backoff v1.0.0
 	github.com/mattn/go-colorable v0.1.12
@@ -36,9 +36,9 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20181117223130-1be2e3e5546d // indirect
 	go.uber.org/multierr v1.8.0 // indirect
 	golang.org/x/crypto v0.0.0-20220411220226-7b82a4e95df4 // indirect
-	golang.org/x/net v0.0.0-20220412020605-290c469a71a5 // indirect
+	golang.org/x/net v0.0.0-20220420153159-1850ba15e1be // indirect
 	golang.org/x/text v0.3.7 // indirect
-	google.golang.org/genproto v0.0.0-20220413183235-5e96e2839df9 // indirect
+	google.golang.org/genproto v0.0.0-20220414192740-2d67ff6cf2b4 // indirect
 	google.golang.org/protobuf v1.28.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect

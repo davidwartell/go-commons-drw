@@ -31,108 +31,102 @@ type Task interface {
 
 type BaseTask struct{}
 
+// LogTraceStruct deprecated
+//goland:noinspection GoUnusedExportedFunction
 func LogTraceStruct(taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
 	logger.Instance().Trace(getTaskLogPrefix(taskName, msg), fieldsWithService...)
 }
 
+// LogDebugStruct deprecated
+//goland:noinspection GoUnusedExportedFunction
 func LogDebugStruct(taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
 	logger.Instance().Debug(getTaskLogPrefix(taskName, msg), fieldsWithService...)
 }
 
+// LogInfoStruct deprecated
+//goland:noinspection GoUnusedExportedFunction
 func LogInfoStruct(taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
 	logger.Instance().Info(getTaskLogPrefix(taskName, msg), fieldsWithService...)
 }
 
+// LogWarnStruct deprecated
+//goland:noinspection GoUnusedExportedFunction
 func LogWarnStruct(taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
 	logger.Instance().Warn(getTaskLogPrefix(taskName, msg), fieldsWithService...)
 }
 
+// LogWarnStructIgnoreCancel deprecated
+//goland:noinspection GoUnusedExportedFunction
 func LogWarnStructIgnoreCancel(ctx context.Context, taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
 	logger.Instance().WarnIgnoreCancel(ctx, getTaskLogPrefix(taskName, msg), fieldsWithService...)
 }
 
+// LogErrorStruct deprecated
+//goland:noinspection GoUnusedExportedFunction
 func LogErrorStruct(taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
 	logger.Instance().Error(getTaskLogPrefix(taskName, msg), fieldsWithService...)
 }
 
+// LogErrorStructIgnoreCancel deprecated
+//goland:noinspection GoUnusedExportedFunction
 func LogErrorStructIgnoreCancel(ctx context.Context, taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
 	logger.Instance().ErrorIgnoreCancel(ctx, getTaskLogPrefix(taskName, msg), fieldsWithService...)
 }
 
-// LogTracef Deprecated
-func LogTracef(taskName string, format string, args ...interface{}) {
-	logger.Instance().TracefUnstruct(getTaskLogPrefix(taskName, format), args...)
-}
-
-// LogTrace Deprecated
-func LogTrace(taskName string, msg string) {
-	logger.Instance().TraceUnstruct(getTaskLogPrefix(taskName, msg))
-}
-
-// LogDebugf Deprecated
-func LogDebugf(taskName string, format string, args ...interface{}) {
-	logger.Instance().DebugfUnstruct(getTaskLogPrefix(taskName, format), args...)
-}
-
-// LogDebug Deprecated
 //goland:noinspection GoUnusedExportedFunction
-func LogDebug(taskName string, msg string) {
-	logger.Instance().DebugUnstruct(getTaskLogPrefix(taskName, msg))
-}
-
-// LogInfof Deprecated
-func LogInfof(taskName string, format string, args ...interface{}) {
-	logger.Instance().InfofUnstruct(getTaskLogPrefix(taskName, format), args...)
-}
-
-// LogInfo Deprecated
-func LogInfo(taskName string, msg string) {
-	logger.Instance().InfoUnstruct(getTaskLogPrefix(taskName, msg))
-}
-
-// LogErrorf Deprecated
-func LogErrorf(taskName string, format string, args ...interface{}) {
-	logger.Instance().ErrorfUnstruct(getTaskLogPrefix(taskName, format), args...)
-}
-
-// LogError Deprecated
-func LogError(taskName string, msg string) {
-	logger.Instance().ErrorUnstruct(getTaskLogPrefix(taskName, msg))
-}
-
-// LogErrorfIgnoreCancel Deprecated
-func LogErrorfIgnoreCancel(ctx context.Context, taskName string, format string, args ...interface{}) {
-	logger.Instance().ErrorfIgnoreCancelUnstruct(ctx, getTaskLogPrefix(taskName, format), args...)
-}
-
-// LogErrorIgnoreCancel Deprecated
-//goland:noinspection GoUnusedExportedFunction
-func LogErrorIgnoreCancel(ctx context.Context, taskName string, msg string) {
-	logger.Instance().ErrorIgnoreCancelUnstruct(ctx, getTaskLogPrefix(taskName, msg))
-}
-
-// LogWarnf Deprecated
-func LogWarnf(taskName string, format string, args ...interface{}) {
-	logger.Instance().WarnfUnstruct(getTaskLogPrefix(taskName, format), args...)
-}
-
-// LogWarn Deprecated
-//goland:noinspection GoUnusedExportedFunction
-func LogWarn(taskName string, msg string) {
-	logger.Instance().WarnUnstruct(getTaskLogPrefix(taskName, msg))
-}
-
 func HandlePanic(taskName string) {
 	if err := recover(); err != nil {
-		LogErrorf(taskName, "panic occurred: %v stacktrace from panic: %s", err, string(debug.Stack()))
+		LogErrorStruct(taskName, "panic occurred", logger.Any("err", err), logger.String("stacktrace", string(debug.Stack())))
 	}
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func LogTrace(taskName string, msg string, fields ...logger.Field) {
+	fieldsWithService := append(fields, logger.String("task", taskName))
+	logger.Instance().Trace(getTaskLogPrefix(taskName, msg), fieldsWithService...)
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func LogDebug(taskName string, msg string, fields ...logger.Field) {
+	fieldsWithService := append(fields, logger.String("task", taskName))
+	logger.Instance().Debug(getTaskLogPrefix(taskName, msg), fieldsWithService...)
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func LogInfo(taskName string, msg string, fields ...logger.Field) {
+	fieldsWithService := append(fields, logger.String("task", taskName))
+	logger.Instance().Info(getTaskLogPrefix(taskName, msg), fieldsWithService...)
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func LogWarn(taskName string, msg string, fields ...logger.Field) {
+	fieldsWithService := append(fields, logger.String("task", taskName))
+	logger.Instance().Warn(getTaskLogPrefix(taskName, msg), fieldsWithService...)
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func LogWarnIgnoreCancel(ctx context.Context, taskName string, msg string, fields ...logger.Field) {
+	fieldsWithService := append(fields, logger.String("task", taskName))
+	logger.Instance().WarnIgnoreCancel(ctx, getTaskLogPrefix(taskName, msg), fieldsWithService...)
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func LogError(taskName string, msg string, fields ...logger.Field) {
+	fieldsWithService := append(fields, logger.String("task", taskName))
+	logger.Instance().Error(getTaskLogPrefix(taskName, msg), fieldsWithService...)
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func LogErrorIgnoreCancel(ctx context.Context, taskName string, msg string, fields ...logger.Field) {
+	fieldsWithService := append(fields, logger.String("task", taskName))
+	logger.Instance().ErrorIgnoreCancel(ctx, getTaskLogPrefix(taskName, msg), fieldsWithService...)
 }
 
 func getTaskLogPrefix(taskName string, format string) string {

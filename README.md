@@ -2,6 +2,14 @@
 
 golang commons libs I have written or curated+bug-fixed.  See README files in packages. Apache License.
 
+### Prerequisites
+
+HomeBrew: https://brew.sh/
+
+```
+brew install golangci/tap/golangci-lint
+```
+
 ### Building
 ```
 make setup
@@ -19,7 +27,14 @@ make release all
 make test
 ```
 
-### gosec
+* Linter
+
+```
+make golint
+```
+
+* Security Linter
+
 ```
 make gosec
 ```

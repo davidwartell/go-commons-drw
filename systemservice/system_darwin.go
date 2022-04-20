@@ -18,6 +18,7 @@
 package systemservice
 
 import (
+	"fmt"
 	"github.com/davidwartell/go-commons-drw/launchd"
 	"github.com/davidwartell/go-commons-drw/logger"
 	"github.com/google/go-cmp/cmp"
@@ -33,25 +34,50 @@ func (s *SystemService) setupSystemService(workingDir string, execPath string) (
 	}
 	if err != nil && err == launchd.ServiceNotFoundError {
 		// service does not exist
-		logger.Instance().InfofUnstruct("%s service does not exist - creating", s.params.ServiceCommonName)
+		logger.Instance().Info(
+			fmt.Sprintf("%s service does not exist - creating", s.params.ServiceCommonName),
+			logger.String("service", s.params.ServiceCommonName),
+		)
 		return s.installSystemService(workingDir, execPath)
 	} else {
 		// service exists see if it has correct properties
-		logger.Instance().InfofUnstruct("%s service found with executable %s", s.params.ServiceCommonName, launchdService.Program)
+		logger.Instance().Info(
+			fmt.Sprintf("%s service found", s.params.ServiceCommonName),
+			logger.String("service", s.params.ServiceCommonName),
+			logger.String("executablePath", launchdService.Program),
+		)
 		desiredPlist := s.newLaunchdPlist(workingDir, execPath)
 		if !desiredPlist.Equal(launchdService) {
-			logger.Instance().InfofUnstruct("%s service found with different configuration: %s", s.params.ServiceCommonName, cmp.Diff(launchdService, desiredPlist))
-			logger.Instance().InfofUnstruct("updating %s service", s.params.ServiceCommonName)
+			logger.Instance().Info(
+				fmt.Sprintf("%s service found with different configuration", s.params.ServiceCommonName),
+				logger.String("service", s.params.ServiceCommonName),
+				logger.String("configDiff", cmp.Diff(launchdService, desiredPlist)),
+			)
+			logger.Instance().Info(
+				fmt.Sprintf("updating %s service", s.params.ServiceCommonName),
+				logger.String("service", s.params.ServiceCommonName),
+			)
 			err = s.uninstallSystemService()
 			if err != nil {
-				logger.Instance().ErrorUnstruct(err)
+				logger.Instance().Error(
+					fmt.Sprintf("%s service error", s.params.ServiceCommonName),
+					logger.String("service", s.params.ServiceCommonName),
+					logger.Error(err),
+				)
 			}
 			err = s.installSystemService(workingDir, execPath)
 			if err != nil {
-				logger.Instance().ErrorUnstruct(err)
+				logger.Instance().Error(
+					fmt.Sprintf("%s service error", s.params.ServiceCommonName),
+					logger.String("service", s.params.ServiceCommonName),
+					logger.Error(err),
+				)
 			}
 		} else {
-			logger.Instance().InfofUnstruct("%s service found with desired configuration - making sure started", s.params.ServiceCommonName)
+			logger.Instance().Info(
+				fmt.Sprintf("%s service found with desired configuration - making sure started", s.params.ServiceCommonName),
+				logger.String("service", s.params.ServiceCommonName),
+			)
 			err = s.startSystemService()
 			if err != nil {
 				return
@@ -114,13 +140,19 @@ func (s *SystemService) installSystemService(workingDir string, execPath string)
 	if err != nil {
 		return
 	}
-	logger.Instance().InfofUnstruct("%s installed", s.params.ServiceCommonName)
+	logger.Instance().Info(
+		fmt.Sprintf("%s installed", s.params.ServiceCommonName),
+		logger.String("service", s.params.ServiceCommonName),
+	)
 
 	err = srvc.Start()
 	if err != nil {
 		return
 	}
-	logger.Instance().InfofUnstruct("%s started", s.params.ServiceCommonName)
+	logger.Instance().Info(
+		fmt.Sprintf("%s started", s.params.ServiceCommonName),
+		logger.String("service", s.params.ServiceCommonName),
+	)
 
 	return
 }
