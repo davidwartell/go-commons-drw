@@ -93,7 +93,7 @@ func (f MutualTLSFactory) NewConnection(ctx context.Context) (*grpc.ClientConn, 
 		if conn != nil {
 			_ = conn.Close()
 		}
-		logger.Instance().Info("failed to pin", logger.String("dialAddr", f.dialAddr), logger.Error(err))
+		logger.Instance().Info("failed to ping", logger.String("dialAddr", f.dialAddr), logger.Error(err))
 		err = errors.Wrapf(err, "failed to ping %s", f.dialAddr)
 		return nil, err
 	}

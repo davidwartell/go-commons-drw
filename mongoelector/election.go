@@ -29,7 +29,9 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/x/bsonx"
+	"net"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,7 +54,7 @@ type LeaderWorker interface {
 
 type FollowerWorker interface {
 	// Start the worker. May be called multiple times in a row.
-	Start(ctx context.Context, electedLeader *ElectedLeader, thisLeaderUUID *mongouuid.UUID)
+	Start(ctx context.Context, thisLeaderUUID *mongouuid.UUID)
 
 	// Stop the worker. May be called multiple times in a row.
 	Stop()
@@ -96,6 +98,10 @@ type ElectorStatus struct {
 	Port          uint64         `json:"port"`
 	IsLeader      bool           `json:"isLeader"`
 	ElectedLeader *ElectedLeader `json:"electedLeader"`
+}
+
+func (el ElectedLeader) ConnectionString() string {
+	return net.JoinHostPort(el.LeaderHostname, strconv.FormatUint(el.LeaderPort, 10))
 }
 
 //goland:noinspection GoUnusedExportedFunction
@@ -184,8 +190,8 @@ func (e *Elector) Status() (status *ElectorStatus) {
 		Boundary:      e.boundary,
 		Hostname:      e.thisInstanceLeaderHostname,
 		Port:          e.thisInstanceLeaderPort,
-		IsLeader:      e.getElectedLeader() != nil && e.thisLeaderUUID.Equal(e.getElectedLeader().LeaderUUID),
-		ElectedLeader: e.getElectedLeader(),
+		IsLeader:      e.GetElectedLeader() != nil && e.thisLeaderUUID.Equal(e.GetElectedLeader().LeaderUUID),
+		ElectedLeader: e.GetElectedLeader(),
 	}
 	return
 }
@@ -290,13 +296,13 @@ func (e *Elector) elect() {
 				e.leaderWorker.Start(e.ctx)
 			}
 			if e.followerWorker != nil {
-				e.followerWorker.Start(e.ctx, e.electedLeader, e.thisLeaderUUID)
+				e.followerWorker.Start(e.ctx, e.thisLeaderUUID)
 			}
 			e.leaderHeartbeat()
 			logger.Instance().Info(e.getLogPrefix("leadership lost"))
 		} else {
 			if e.followerWorker != nil {
-				e.followerWorker.Start(e.ctx, e.electedLeader, e.thisLeaderUUID)
+				e.followerWorker.Start(e.ctx, e.thisLeaderUUID)
 			}
 			e.followerLeaderWatch()
 		}
@@ -372,7 +378,7 @@ func (e *Elector) setElectedLeader(newLeader *ElectedLeader) {
 	e.electedLeader = newLeader
 }
 
-func (e *Elector) getElectedLeader() *ElectedLeader {
+func (e *Elector) GetElectedLeader() *ElectedLeader {
 	e.electedLeaderLock.Lock()
 	defer e.electedLeaderLock.Unlock()
 	return e.electedLeader
