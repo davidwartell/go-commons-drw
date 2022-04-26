@@ -104,6 +104,7 @@ type ElectorStatus struct {
 	Port          uint64         `json:"port"`
 	IsLeader      bool           `json:"isLeader"`
 	ElectedLeader *ElectedLeader `json:"electedLeader"`
+	Running       bool           `json:"running"`
 }
 
 func (el ElectedLeader) ConnectionString() string {
@@ -224,15 +225,21 @@ func (e *Elector) Close() {
 func (e *Elector) Status() (status *ElectorStatus) {
 	currentLeader := e.GetElectedLeader()
 
+	var config electorConfig
+	var running bool
 	e.rwMutex.RLock()
-	defer e.rwMutex.RUnlock()
+	config = e.config
+	running = e.started
+	e.rwMutex.RUnlock()
+
 	status = &ElectorStatus{
-		Id:            e.config.thisLeaderUUID,
-		Boundary:      e.config.boundary,
-		Hostname:      e.config.thisInstanceLeaderHostname,
-		Port:          e.config.thisInstanceLeaderPort,
-		IsLeader:      currentLeader != nil && e.config.thisLeaderUUID.Equal(currentLeader.LeaderUUID),
+		Id:            config.thisLeaderUUID,
+		Boundary:      config.boundary,
+		Hostname:      config.thisInstanceLeaderHostname,
+		Port:          config.thisInstanceLeaderPort,
+		IsLeader:      currentLeader != nil && config.thisLeaderUUID.Equal(currentLeader.LeaderUUID),
 		ElectedLeader: currentLeader,
+		Running:       running,
 	}
 	return
 }
