@@ -54,28 +54,31 @@ type LeaderWorker interface {
 
 type FollowerWorker interface {
 	// Start the worker. May be called multiple times in a row.
-	Start(ctx context.Context, thisLeaderUUID *mongouuid.UUID)
+	Start(ctx context.Context, thisLeaderUUID mongouuid.UUID)
 
 	// Stop the worker. May be called multiple times in a row.
 	Stop()
 }
 
 type Elector struct {
-	ctx                        context.Context
-	cancel                     context.CancelFunc
-	wg                         sync.WaitGroup
-	database                   *mongostore.DataStore
-	boundary                   string
-	leaderWorker               LeaderWorker
-	followerWorker             FollowerWorker
-	thisInstanceLeaderHostname string
-	thisInstanceLeaderPort     uint64
-	options                    ElectorOptions
-	thisLeaderUUID             *mongouuid.UUID
-	leaderExpired              chan struct{}
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	database *mongostore.DataStore
+	config   electorConfig
 
 	electedLeaderLock sync.Mutex // protects electedLeader
 	electedLeader     *ElectedLeader
+}
+
+type electorConfig struct {
+	boundary                   string
+	thisLeaderUUID             mongouuid.UUID
+	thisInstanceLeaderHostname string
+	thisInstanceLeaderPort     uint64
+	leaderWorker               LeaderWorker
+	followerWorker             FollowerWorker
+	options                    ElectorOptions
 }
 
 type ElectedLeader struct {
@@ -142,22 +145,25 @@ func NewElector(
 	}
 
 	e = &Elector{
-		database:                   database,
-		boundary:                   boundary,
-		leaderWorker:               leaderWorker,
-		followerWorker:             followerWorker,
-		thisInstanceLeaderHostname: thisInstanceLeaderHostname,
-		thisInstanceLeaderPort:     thisInstanceLeaderPort,
-		options:                    options,
-		thisLeaderUUID:             mongouuid.NewUUID(),
+		database: database,
+		config: electorConfig{
+			boundary:                   boundary,
+			leaderWorker:               leaderWorker,
+			followerWorker:             followerWorker,
+			thisInstanceLeaderHostname: thisInstanceLeaderHostname,
+			thisInstanceLeaderPort:     thisInstanceLeaderPort,
+			options:                    options,
+			thisLeaderUUID:             mongouuid.MakeUUID(),
+		},
 	}
+
 	e.ctx, e.cancel = context.WithCancel(ctx)
-	e.leaderExpired = make(chan struct{})
+	leaderExpiredChanRW := make(chan struct{})
 
 	e.wg.Add(1)
-	go e.expireWorker()
+	go e.expireWorker(e.ctx, &e.wg, e.config, e.database, leaderExpiredChanRW)
 	e.wg.Add(1)
-	go e.elect()
+	go e.elect(e.ctx, &e.wg, e.config, leaderExpiredChanRW)
 
 	return
 }
@@ -181,88 +187,102 @@ func (e *Elector) Stop() {
 		e.cancel()
 	}
 	e.wg.Wait()
-	logger.Instance().Info(e.getLogPrefix("stopped"))
+	logger.Instance().Info(getLogPrefix(e.config.boundary, e.config.thisLeaderUUID, "stopped"))
 }
 
 func (e *Elector) Status() (status *ElectorStatus) {
 	status = &ElectorStatus{
-		Id:            *e.thisLeaderUUID,
-		Boundary:      e.boundary,
-		Hostname:      e.thisInstanceLeaderHostname,
-		Port:          e.thisInstanceLeaderPort,
-		IsLeader:      e.GetElectedLeader() != nil && e.thisLeaderUUID.Equal(e.GetElectedLeader().LeaderUUID),
+		Id:            e.config.thisLeaderUUID,
+		Boundary:      e.config.boundary,
+		Hostname:      e.config.thisInstanceLeaderHostname,
+		Port:          e.config.thisInstanceLeaderPort,
+		IsLeader:      e.GetElectedLeader() != nil && e.config.thisLeaderUUID.Equal(e.GetElectedLeader().LeaderUUID),
 		ElectedLeader: e.GetElectedLeader(),
 	}
 	return
 }
 
-func (e *Elector) expireWorker() {
-	defer e.wg.Done()
-	defer close(e.leaderExpired)
+func doExpireWork(ctxIn context.Context, config electorConfig) (latestLeader *ElectedLeader) {
+	var err error
+	var collection *mongo.Collection
+	collection, err = mongostore.Instance().CollectionLinearWriteRead(ctxIn, collectionName)
+	if err != nil {
+		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error"), logger.Error(err))
+		return
+	}
+
+	filter := bson.M{}
+	filter["_id"] = config.boundary
+	filter["ttlExpire"] = bson.D{{"$lt", time.Now()}}
+	ctx, cancel := context.WithTimeout(ctxIn, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
+	_, err = collection.DeleteOne(ctx, filter)
+	cancel()
+	if err != nil {
+		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on DeleteOne for expireWorker"), logger.Error(err))
+		return
+	}
+
+	newLeader := &ElectedLeader{}
+	filter = bson.M{}
+	filter["_id"] = config.boundary
+	ctx, cancel = context.WithTimeout(ctxIn, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
+	err = collection.FindOne(ctx, filter).Decode(newLeader)
+	cancel()
+	if err != nil {
+		if err != mongo.ErrNoDocuments {
+			logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on FindOne for expireWorker"), logger.Error(err))
+		}
+	} else {
+		latestLeader = newLeader
+	}
+	return
+}
+
+func notifyLeaderExpired(ctx context.Context, leaderExpired chan<- struct{}) {
+	select {
+	case <-time.After(time.Millisecond * time.Duration(250)):
+	case leaderExpired <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
+}
+
+func (e *Elector) expireWorker(ctx context.Context, wg *sync.WaitGroup, config electorConfig, database *mongostore.DataStore, leaderExpiredChan chan<- struct{}) {
+	defer e.setElectedLeader(nil)
+	defer wg.Done()
+	defer close(leaderExpiredChan)
 	indexEnsured := false
 
-expireWorkerLoop:
 	for {
 		select {
-		case <-time.After(time.Second * time.Duration(e.options.LeaderHeartbeatSeconds)):
-		case <-e.ctx.Done():
-			break expireWorkerLoop
+		case <-time.After(time.Second * time.Duration(config.options.LeaderHeartbeatSeconds)):
+		case <-ctx.Done():
+			return
 		}
 
 		if !indexEnsured {
-			ok := e.database.AddAndEnsureManagedIndexes(e.ctx, ManagedIndexes)
+			ok := database.AddAndEnsureManagedIndexes(ctx, ManagedIndexes)
 			if !ok {
-				logger.Instance().Error(e.getLogPrefix("error ensuring indexes"), logger.Stack("stacktrace"))
+				logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error ensuring indexes"), logger.Stack("stacktrace"))
 				continue
 			} else {
 				indexEnsured = true
 			}
 		}
 
-		var err error
-		var collection *mongo.Collection
-		collection, err = mongostore.Instance().CollectionLinearWriteRead(e.ctx, collectionName)
-		if err != nil {
-			logger.Instance().Error(e.getLogPrefix("error"), logger.Error(err))
-			continue
-		}
+		latestLeader := doExpireWork(ctx, config)
+		e.setElectedLeader(latestLeader)
 
-		filter := bson.M{}
-		filter["_id"] = e.boundary
-		filter["ttlExpire"] = bson.D{{"$lt", time.Now()}}
-		ctx, cancel := context.WithTimeout(e.ctx, time.Duration(e.options.LeaderHeartbeatSeconds)*time.Second)
-		_, err = collection.DeleteOne(ctx, filter)
-		cancel()
-		if err != nil {
-			logger.Instance().Error(e.getLogPrefix("error on DeleteOne for expireWorker"), logger.Error(err))
-			continue
-		}
-
-		newLeader := &ElectedLeader{}
-		filter = bson.M{}
-		filter["_id"] = e.boundary
-		ctx, cancel = context.WithTimeout(e.ctx, time.Duration(e.options.LeaderHeartbeatSeconds)*time.Second)
-		err = collection.FindOne(ctx, filter).Decode(newLeader)
-		cancel()
-		if err != nil {
-			if err != mongo.ErrNoDocuments {
-				logger.Instance().Error(e.getLogPrefix("error on FindOne for expireWorker"), logger.Error(err))
-			}
-			select {
-			case <-time.After(time.Millisecond * time.Duration(250)):
-			case e.leaderExpired <- struct{}{}:
-			case <-e.ctx.Done():
-				break
-			}
-		} else {
-			e.setElectedLeader(newLeader)
+		// notify the elector if there is no leader
+		if latestLeader == nil {
+			notifyLeaderExpired(e.ctx, leaderExpiredChan)
 		}
 	}
 }
 
-func (e *Elector) followerLeaderWatch() {
+func (e *Elector) followerLeaderWatch(leaderExpiredChan <-chan struct{}) {
 	select {
-	case <-e.leaderExpired:
+	case <-leaderExpiredChan:
 		break
 	case <-e.ctx.Done():
 		break
@@ -277,73 +297,73 @@ func (e *Elector) followerLeaderWatch() {
 // If election lost:
 //		1) start followerWorker
 //		2) watch for deletes to the collection and if the leader for our e.boundary is deleted run election
-func (e *Elector) elect() {
-	defer e.wg.Done()
-	logger.Instance().Info(e.getLogPrefix("started"), logger.String("hostname", e.thisInstanceLeaderHostname), logger.Uint64("port", e.thisInstanceLeaderPort))
+func (e *Elector) elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, leaderExpiredChan <-chan struct{}) {
+	defer wg.Done()
+	logger.Instance().Info(getLogPrefix(config.boundary, config.thisLeaderUUID, "started"), logger.String("hostname", config.thisInstanceLeaderHostname), logger.Uint64("port", config.thisInstanceLeaderPort))
 	for {
 		// check context cancelled
 		if e.ctx.Err() != nil {
 			break
 		}
 
-		won, err := e.tryWinElectionLoop()
+		won, err := e.tryWinElectionLoop(ctx, config)
 		if err != nil {
 			break
 		}
 
 		if won {
-			if e.leaderWorker != nil {
-				e.leaderWorker.Start(e.ctx)
+			if config.leaderWorker != nil {
+				config.leaderWorker.Start(e.ctx)
 			}
-			if e.followerWorker != nil {
-				e.followerWorker.Start(e.ctx, e.thisLeaderUUID)
+			if config.followerWorker != nil {
+				config.followerWorker.Start(ctx, config.thisLeaderUUID)
 			}
-			e.leaderHeartbeat()
-			logger.Instance().Info(e.getLogPrefix("leadership lost"))
+			e.leaderHeartbeat(ctx, config)
+			logger.Instance().Info(getLogPrefix(config.boundary, config.thisLeaderUUID, "leadership lost"))
 		} else {
-			if e.followerWorker != nil {
-				e.followerWorker.Start(e.ctx, e.thisLeaderUUID)
+			if config.followerWorker != nil {
+				config.followerWorker.Start(ctx, config.thisLeaderUUID)
 			}
-			e.followerLeaderWatch()
+			e.followerLeaderWatch(leaderExpiredChan)
 		}
-		e.stopWorkers()
+		stopWorkers(config)
 	}
 
-	e.stopWorkers()
+	stopWorkers(config)
 }
 
 // leaderHeartbeat update ttlExpire to keep leadership. Return if leadership lost, context cancelled, or operations on mongo fail.
-func (e *Elector) leaderHeartbeat() {
+func (e *Elector) leaderHeartbeat(ctx context.Context, config electorConfig) {
 	for {
 		select {
-		case <-time.After(time.Second * time.Duration(e.options.LeaderHeartbeatSeconds)):
-		case <-e.ctx.Done():
+		case <-time.After(time.Second * time.Duration(config.options.LeaderHeartbeatSeconds)):
+		case <-ctx.Done():
 			return
 		}
 
 		// get a collection, if fail wait and try again
 		collection, err := mongostore.Instance().CollectionLinearWriteRead(e.ctx, collectionName)
 		if err != nil {
-			logger.Instance().Error(e.getLogPrefix("error getting mongo collection"), logger.Error(err))
+			logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error getting mongo collection"), logger.Error(err))
 			return
 		}
 
 		setDoc := bson.D{
-			{"ttlExpire", time.Now().Add(time.Duration(e.options.LeaderTTLSeconds) * time.Second)},
+			{"ttlExpire", time.Now().Add(time.Duration(config.options.LeaderTTLSeconds) * time.Second)},
 		}
 		queueInsertFilter := bson.D{
-			{"_id", e.boundary},
-			{"leaderUUID", e.thisLeaderUUID.Raw()},
+			{"_id", config.boundary},
+			{"leaderUUID", config.thisLeaderUUID.Raw()},
 		}
 		queueUpdateOnInsert := bson.D{
 			{"$set", setDoc},
 		}
 		var updateResult *mongo.UpdateResult
-		ctx, cancel := context.WithTimeout(e.ctx, time.Duration(e.options.LeaderHeartbeatSeconds)*time.Second)
+		ctx, cancel := context.WithTimeout(e.ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
 		updateResult, err = collection.UpdateOne(ctx, queueInsertFilter, queueUpdateOnInsert)
 		cancel()
 		if err != nil {
-			logger.Instance().Error(e.getLogPrefix("error on UpdateOne for leaderHeartbeat"), logger.Error(err))
+			logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on UpdateOne for leaderHeartbeat"), logger.Error(err))
 			return
 		}
 		if updateResult == nil || updateResult.MatchedCount == 0 {
@@ -355,18 +375,18 @@ func (e *Elector) leaderHeartbeat() {
 // tryWinElectionLoop
 // runs tryWinElection in a loop until it wins or loses without or the context is cancelled
 // returns err only if context cancelled
-func (e *Elector) tryWinElectionLoop() (won bool, err error) {
+func (e *Elector) tryWinElectionLoop(ctx context.Context, config electorConfig) (won bool, err error) {
 	for {
 		// if we win or lose election without unexpected error then return
-		won, err = e.tryWinElection()
+		won, err = e.tryWinElection(ctx, config)
 		if err == nil {
 			return
 		}
 
 		// had unexpected error try again after e.leaderHeartbeatSeconds or context cancel
 		select {
-		case <-time.After(time.Second * time.Duration(e.options.LeaderHeartbeatSeconds)):
-		case <-e.ctx.Done():
+		case <-time.After(time.Second * time.Duration(config.options.LeaderHeartbeatSeconds)):
+		case <-ctx.Done():
 			return false, contextCancelledError
 		}
 	}
@@ -384,42 +404,45 @@ func (e *Elector) GetElectedLeader() *ElectedLeader {
 	return e.electedLeader
 }
 
-func (e *Elector) tryWinElection() (won bool, err error) {
+func (e *Elector) tryWinElection(ctxIn context.Context, config electorConfig) (won bool, err error) {
+	var currentLeader *ElectedLeader
+	defer e.setElectedLeader(currentLeader)
+
 	// get a collection, if fail wait and try again
 	var collection *mongo.Collection
-	collection, err = mongostore.Instance().CollectionLinearWriteRead(e.ctx, collectionName)
+	collection, err = mongostore.Instance().CollectionLinearWriteRead(ctxIn, collectionName)
 	if err != nil {
-		logger.Instance().Error(e.getLogPrefix("error getting mongo collection"), logger.Error(err))
+		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error getting mongo collection"), logger.Error(err))
 		err = errors.Wrap(err, "error getting mongo collection")
 		return false, err
 	}
 
 	thisLeader := &ElectedLeader{
-		Boundary:       e.boundary,
-		TTLExpire:      time.Now().Add(time.Duration(e.options.LeaderTTLSeconds) * time.Second),
-		LeaderUUID:     *e.thisLeaderUUID,
-		LeaderHostname: e.thisInstanceLeaderHostname,
-		LeaderPort:     e.thisInstanceLeaderPort,
+		Boundary:       config.boundary,
+		TTLExpire:      time.Now().Add(time.Duration(config.options.LeaderTTLSeconds) * time.Second),
+		LeaderUUID:     config.thisLeaderUUID,
+		LeaderHostname: config.thisInstanceLeaderHostname,
+		LeaderPort:     config.thisInstanceLeaderPort,
 	}
 
 	var insertResult *mongo.InsertOneResult
-	ctx, cancel := context.WithTimeout(e.ctx, time.Duration(e.options.LeaderHeartbeatSeconds)*time.Second)
+	ctx, cancel := context.WithTimeout(ctxIn, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
 	insertResult, err = collection.InsertOne(ctx, thisLeader)
 	cancel()
 	if err != nil && !mongostore.IsDuplicateKeyError(err) {
-		logger.Instance().Error(e.getLogPrefix("error on InsertOne for tryWinElection"), logger.Error(err))
+		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on InsertOne for tryWinElection"), logger.Error(err))
 		err = errors.Wrap(err, "error on InsertOne for tryWinElection")
 		return false, err
 	} else if err == nil && insertResult != nil && insertResult.InsertedID != nil {
-		e.setElectedLeader(thisLeader)
-		logger.Instance().Info(e.getLogPrefix("election won"))
+		currentLeader = thisLeader
+		logger.Instance().Info(getLogPrefix(config.boundary, config.thisLeaderUUID, "election won"))
 		return true, nil
 	} else {
-		logger.Instance().Info(e.getLogPrefix("election lost"))
+		logger.Instance().Info(getLogPrefix(config.boundary, config.thisLeaderUUID, "election lost"))
 		newLeader := &ElectedLeader{}
 		filter := bson.M{}
-		filter["_id"] = e.boundary
-		ctx, cancel = context.WithTimeout(e.ctx, time.Duration(e.options.LeaderHeartbeatSeconds)*time.Second)
+		filter["_id"] = config.boundary
+		ctx, cancel = context.WithTimeout(e.ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
 		err = collection.FindOne(ctx, filter).Decode(newLeader)
 		cancel()
 		if err != nil {
@@ -427,60 +450,60 @@ func (e *Elector) tryWinElection() (won bool, err error) {
 			if err == mongo.ErrNoDocuments {
 				return false, mongo.ErrNoDocuments
 			}
-			logger.Instance().Error(e.getLogPrefix("error on FindOne for tryWinElection"), logger.Error(err))
+			logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on FindOne for tryWinElection"), logger.Error(err))
 			err = errors.Wrapf(err, "error on FindOne for tryWinElection")
 			return false, err
 		}
-		e.setElectedLeader(newLeader)
+		currentLeader = newLeader
 		return false, nil
 	}
 }
 
-func (e *Elector) stopWorkers() {
+func stopWorkers(config electorConfig) {
 	var stopWorkersWg sync.WaitGroup
-	if e.followerWorker != nil {
+	if config.followerWorker != nil {
 		stopWorkersWg.Add(1)
 		go func() {
 			defer func() {
 				if err := recover(); err != nil {
 					logger.Instance().Error(
-						e.getLogPrefix("panic occurred during stop follower worker"),
+						getLogPrefix(config.boundary, config.thisLeaderUUID, "panic occurred during stop follower worker"),
 						logger.Any("error", err),
 						logger.String("stacktrace", string(debug.Stack())),
 					)
 				}
 			}()
-			e.followerWorker.Stop()
+			config.followerWorker.Stop()
 			stopWorkersWg.Done()
 		}()
 	}
-	if e.leaderWorker != nil {
+	if config.leaderWorker != nil {
 		stopWorkersWg.Add(1)
 		go func() {
 			defer func() {
 				if err := recover(); err != nil {
 					logger.Instance().Error(
-						e.getLogPrefix("panic occurred during stop leader worker"),
+						getLogPrefix(config.boundary, config.thisLeaderUUID, "panic occurred during stop leader worker"),
 						logger.Any("error", err),
 						logger.String("stacktrace", string(debug.Stack())),
 					)
 				}
 			}()
-			e.leaderWorker.Stop()
+			config.leaderWorker.Stop()
 			stopWorkersWg.Done()
 		}()
 	}
 	stopWorkersWg.Wait()
 }
 
-func (e *Elector) getLogPrefix(format string) string {
+func getLogPrefix(boundary string, thisLeaderUUID mongouuid.UUID, format string) string {
 	var sb strings.Builder
 	sb.WriteString("[")
 	sb.WriteString(electorLogPrefix)
 	sb.WriteString(" ")
-	sb.WriteString(e.boundary)
+	sb.WriteString(boundary)
 	sb.WriteString(":")
-	sb.WriteString(e.thisLeaderUUID.String())
+	sb.WriteString(thisLeaderUUID.String())
 	sb.WriteString("] ")
 	sb.WriteString(format)
 	return sb.String()
