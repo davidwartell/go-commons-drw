@@ -13,7 +13,7 @@ LDFLAGS_GLOBAL=${DEBUG_GLOBAL_LDFLAGS}
 all: go-build
 
 .PHONY: release
-release:
+release: ## Make the release target first to build with release flags and without debugging symbols e.g.: make release all
 	$(info RELEASE FLAGS)
 	$(eval IS_RELEASE = true)
 	$(eval LDFLAGS_GLOBAL = $(RELEASE_GLOBAL_LDFLAGS))
@@ -21,27 +21,27 @@ release:
 	@: # this suppresses message nothing to do for target
 
 .PHONY: go-build
-go-build:
+go-build: ## Compile golang lib with debug symbols.
 	$(GO_BUILD) $(GO_BUILD_OPTIONS) $(LDFLAGS_GLOBAL) ./... ; \
 
 .PHONY: test
-test:
+test: ## Run unit tests.
 	$(GO_TEST) ${LDFLAGS_GLOBAL} -v ./...
 
 # G304 - machineid/helper.go:31 false positive on file name in variable
 # G404 - weak random generator for exponential backoff times is fine (backoff/backoff.go:71)
 # G402 - TLS InsecureSkipVerify set true on purpose used by httpcommon for http probing through a proxy
 .PHONY: gosec
-gosec:
+gosec: ## Run gosec to static analyze for security vulnerabilities..
 	gosec -exclude=G304,G404,G402 ./...
 
 .PHONY: clean
-clean:
+clean: ## Clean.
 	$(GO_CLEAN)
 
 # FIXME remove exclude for "-D staticcheck" when deprecated logging API usage is fixed
 .PHONY: golint
-golint:
+golint: ## Run golangci-lint linter.
 	golangci-lint run -D govet -D staticcheck
 
 GO_MODULES += "go.uber.org/zap"
@@ -66,7 +66,7 @@ GO_MODULES += "github.com/jpillora/backoff"
 GO_MODULES_TOOLS += "github.com/securego/gosec/v2/cmd/gosec"
 
 .PHONY: setup
-setup:
+setup: ## Update / download required go modules.
 	for m in $(GO_MODULES); do \
 			echo "go get -u $$m"; \
 			go get -u $$m; \
@@ -78,4 +78,13 @@ setup:
 	done
 	$(GO_MOD_TIDY)
 
-
+help: ## Show this help.
+	@echo ''
+	@echo 'Usage:'
+	@echo '  ${YELLOW}make${RESET} ${GREEN}<target>${RESET}'
+	@echo ''
+	@echo 'Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} { \
+		if (/^[a-zA-Z_-]+:.*?##.*$$/) {printf "    ${YELLOW}%-20s${GREEN}%s${RESET}\n", $$1, $$2} \
+		else if (/^## .*$$/) {printf "  ${CYAN}%s${RESET}\n", substr($$1,4)} \
+		}' $(MAKEFILE_LIST)
