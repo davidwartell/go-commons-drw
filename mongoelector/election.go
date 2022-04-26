@@ -122,8 +122,8 @@ func NewElectorOptions() ElectorOptions {
 // Creates a new instance of Elector for the given boundary.
 // boundary - a unique case-sensitive string (conventionally a path). Only one election can take place in a boundary at a time.
 // database - a mongodb database.  Must be shared by all Electors in a boundary. Should be shared by all Electors across all boundaries.
-// leaderWorker - leaderWorker.Start() is called when this instance wins an election.  leaderWorker.Stop() is called when this instance loses an election
-// followerWorker - followerWorker.Start() is called when this instance loses an election.  followerWorker.Stop() is called when this instance wins an election
+// leaderWorker - leaderWorker.Start() is called when this instance wins an election.  leaderWorker.Close() is called when this instance loses an election
+// followerWorker - followerWorker.Start() is called when this instance loses an election.  followerWorker.Close() is called when this instance wins an election
 // thisInstanceLeaderHostname - a hostname that will be passed to followers they can use to connect to a service on the leader, can be empty
 // thisInstanceLeaderPort - a port that will be passed to followers they can use to connect to a service on the leader, can be empty
 //goland:noinspection GoUnusedExportedFunction
@@ -182,7 +182,7 @@ func NewElector(
 	e.wg.Add(1)
 	go expireWorker(e.ctx, &e.wg, e.config, e.database, leaderExpiredChanRW, newLeaderChanRW)
 	e.wg.Add(1)
-	go e.elect(e.ctx, &e.wg, e.config, leaderExpiredChanRW, newLeaderChanRW)
+	go elect(e.ctx, &e.wg, e.config, leaderExpiredChanRW, newLeaderChanRW)
 
 	e.started = true
 	return
@@ -202,7 +202,7 @@ var ManagedIndexes = []mongostore.Index{
 	},
 }
 
-func (e *Elector) Stop() {
+func (e *Elector) Close() {
 	e.rwMutex.Lock()
 	defer e.rwMutex.Unlock()
 	if !e.started {
@@ -397,7 +397,7 @@ func followerLeaderWatch(ctx context.Context, leaderExpiredChan <-chan struct{})
 // If election lost:
 //		1) start followerWorker
 //		2) watch for deletes to the collection and if the leader for our e.boundary is deleted run election
-func (e *Elector) elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, leaderExpiredChan <-chan struct{}, newLeaderChan chan<- *ElectedLeader) {
+func elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, leaderExpiredChan <-chan struct{}, newLeaderChan chan<- *ElectedLeader) {
 	defer wg.Done()
 	defer func() {
 		if err := recover(); err != nil {
@@ -412,7 +412,7 @@ func (e *Elector) elect(ctx context.Context, wg *sync.WaitGroup, config electorC
 	logger.Instance().Info(getLogPrefix(config.boundary, config.thisLeaderUUID, "started"), logger.String("hostname", config.thisInstanceLeaderHostname), logger.Uint64("port", config.thisInstanceLeaderPort))
 	for {
 		// check context cancelled
-		if e.ctx.Err() != nil {
+		if ctx.Err() != nil {
 			break
 		}
 
@@ -423,7 +423,7 @@ func (e *Elector) elect(ctx context.Context, wg *sync.WaitGroup, config electorC
 
 		if won {
 			if config.leaderWorker != nil {
-				config.leaderWorker.Start(e.ctx)
+				config.leaderWorker.Start(ctx)
 			}
 			if config.followerWorker != nil {
 				config.followerWorker.Start(ctx, config.thisLeaderUUID)
