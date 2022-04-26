@@ -61,14 +61,17 @@ type FollowerWorker interface {
 }
 
 type Elector struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	database *mongostore.DataStore
-	config   electorConfig
-
-	electedLeaderLock sync.Mutex // protects electedLeader
-	electedLeader     *ElectedLeader
+	rwMutex            sync.RWMutex
+	started            bool
+	ctx                context.Context
+	cancel             context.CancelFunc
+	wg                 sync.WaitGroup
+	database           *mongostore.DataStore
+	config             electorConfig
+	leaderManagerWg    sync.WaitGroup
+	leaderQueryChan    chan<- struct{}
+	leaderResponseChan <-chan *ElectedLeader
+	newLeaderChan      chan<- *ElectedLeader
 }
 
 type electorConfig struct {
@@ -156,15 +159,32 @@ func NewElector(
 			thisLeaderUUID:             mongouuid.MakeUUID(),
 		},
 	}
+	e.rwMutex.Lock()
+	defer e.rwMutex.Unlock()
 
 	e.ctx, e.cancel = context.WithCancel(ctx)
+
+	// ask for current leader
+	leaderQueryChanRW := make(chan struct{})
+	e.leaderQueryChan = leaderQueryChanRW
+
+	// get responses on current leader
+	leaderResponseChanRW := make(chan *ElectedLeader)
+	e.leaderResponseChan = leaderResponseChanRW
+
+	newLeaderChanRW := make(chan *ElectedLeader)
+	e.newLeaderChan = newLeaderChanRW
+
+	e.leaderManagerWg.Add(1)
+	go leaderManager(&e.leaderManagerWg, e.config, newLeaderChanRW, leaderQueryChanRW, leaderResponseChanRW)
+
 	leaderExpiredChanRW := make(chan struct{})
-
 	e.wg.Add(1)
-	go e.expireWorker(e.ctx, &e.wg, e.config, e.database, leaderExpiredChanRW)
+	go expireWorker(e.ctx, &e.wg, e.config, e.database, leaderExpiredChanRW, newLeaderChanRW)
 	e.wg.Add(1)
-	go e.elect(e.ctx, &e.wg, e.config, leaderExpiredChanRW)
+	go e.elect(e.ctx, &e.wg, e.config, leaderExpiredChanRW, newLeaderChanRW)
 
+	e.started = true
 	return
 }
 
@@ -183,23 +203,93 @@ var ManagedIndexes = []mongostore.Index{
 }
 
 func (e *Elector) Stop() {
+	e.rwMutex.Lock()
+	defer e.rwMutex.Unlock()
+	if !e.started {
+		return
+	}
 	if e.cancel != nil {
 		e.cancel()
 	}
+	close(e.leaderQueryChan)
 	e.wg.Wait()
+
+	// need e.wg to complete before closing this so all writers to e.newLeaderChan have exited
+	// closing e.newLeaderChan will signal the leaderManager to exit
+	close(e.newLeaderChan)
+	e.leaderManagerWg.Wait()
 	logger.Instance().Info(getLogPrefix(e.config.boundary, e.config.thisLeaderUUID, "stopped"))
 }
 
 func (e *Elector) Status() (status *ElectorStatus) {
+	currentLeader := e.GetElectedLeader()
+
+	e.rwMutex.RLock()
+	defer e.rwMutex.RUnlock()
 	status = &ElectorStatus{
 		Id:            e.config.thisLeaderUUID,
 		Boundary:      e.config.boundary,
 		Hostname:      e.config.thisInstanceLeaderHostname,
 		Port:          e.config.thisInstanceLeaderPort,
-		IsLeader:      e.GetElectedLeader() != nil && e.config.thisLeaderUUID.Equal(e.GetElectedLeader().LeaderUUID),
-		ElectedLeader: e.GetElectedLeader(),
+		IsLeader:      currentLeader != nil && e.config.thisLeaderUUID.Equal(currentLeader.LeaderUUID),
+		ElectedLeader: currentLeader,
 	}
 	return
+}
+
+func (e *Elector) GetElectedLeader() *ElectedLeader {
+	e.rwMutex.RLock()
+	defer e.rwMutex.RUnlock()
+	if !e.started {
+		return nil
+	}
+	e.leaderQueryChan <- struct{}{}
+	return <-e.leaderResponseChan
+}
+
+func leaderManager(
+	wg *sync.WaitGroup,
+	config electorConfig,
+	newLeaderChan <-chan *ElectedLeader,
+	leaderQueryChan <-chan struct{},
+	leaderResponseChan chan<- *ElectedLeader,
+) {
+	defer wg.Done()
+	defer close(leaderResponseChan)
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Instance().Error(
+				getLogPrefix(config.boundary, config.thisLeaderUUID, "panic occurred in leaderManager"),
+				logger.Any("error", err),
+				logger.String("stacktrace", string(debug.Stack())),
+			)
+		}
+	}()
+
+	var theLeader *ElectedLeader
+	for {
+		select {
+		case newLeader, ok := <-newLeaderChan:
+			if !ok {
+				// channel is closed don't read anymore from it
+				newLeaderChan = nil
+				break
+			}
+			theLeader = newLeader
+
+		case _, ok := <-leaderQueryChan:
+			if !ok {
+				// channel is closed don't read anymore from it
+				leaderQueryChan = nil
+				break
+			}
+			leaderResponseChan <- theLeader
+		}
+		// if these channels are closed we break loop
+		if newLeaderChan == nil && leaderQueryChan == nil {
+			break
+		}
+	}
 }
 
 func doExpireWork(ctxIn context.Context, config electorConfig) (latestLeader *ElectedLeader) {
@@ -247,12 +337,23 @@ func notifyLeaderExpired(ctx context.Context, leaderExpired chan<- struct{}) {
 	}
 }
 
-func (e *Elector) expireWorker(ctx context.Context, wg *sync.WaitGroup, config electorConfig, database *mongostore.DataStore, leaderExpiredChan chan<- struct{}) {
-	defer e.setElectedLeader(nil)
+func expireWorker(ctx context.Context, wg *sync.WaitGroup, config electorConfig, database *mongostore.DataStore, leaderExpiredChan chan<- struct{}, newLeaderChan chan<- *ElectedLeader) {
 	defer wg.Done()
 	defer close(leaderExpiredChan)
-	indexEnsured := false
+	defer func() {
+		newLeaderChan <- nil
+	}()
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Instance().Error(
+				getLogPrefix(config.boundary, config.thisLeaderUUID, "panic occurred in expireWorker"),
+				logger.Any("error", err),
+				logger.String("stacktrace", string(debug.Stack())),
+			)
+		}
+	}()
 
+	indexEnsured := false
 	for {
 		select {
 		case <-time.After(time.Second * time.Duration(config.options.LeaderHeartbeatSeconds)):
@@ -271,20 +372,19 @@ func (e *Elector) expireWorker(ctx context.Context, wg *sync.WaitGroup, config e
 		}
 
 		latestLeader := doExpireWork(ctx, config)
-		e.setElectedLeader(latestLeader)
-
+		newLeaderChan <- latestLeader
 		// notify the elector if there is no leader
 		if latestLeader == nil {
-			notifyLeaderExpired(e.ctx, leaderExpiredChan)
+			notifyLeaderExpired(ctx, leaderExpiredChan)
 		}
 	}
 }
 
-func (e *Elector) followerLeaderWatch(leaderExpiredChan <-chan struct{}) {
+func followerLeaderWatch(ctx context.Context, leaderExpiredChan <-chan struct{}) {
 	select {
 	case <-leaderExpiredChan:
 		break
-	case <-e.ctx.Done():
+	case <-ctx.Done():
 		break
 	}
 }
@@ -297,8 +397,18 @@ func (e *Elector) followerLeaderWatch(leaderExpiredChan <-chan struct{}) {
 // If election lost:
 //		1) start followerWorker
 //		2) watch for deletes to the collection and if the leader for our e.boundary is deleted run election
-func (e *Elector) elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, leaderExpiredChan <-chan struct{}) {
+func (e *Elector) elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, leaderExpiredChan <-chan struct{}, newLeaderChan chan<- *ElectedLeader) {
 	defer wg.Done()
+	defer func() {
+		if err := recover(); err != nil {
+			logger.Instance().Error(
+				getLogPrefix(config.boundary, config.thisLeaderUUID, "panic occurred in elect"),
+				logger.Any("error", err),
+				logger.String("stacktrace", string(debug.Stack())),
+			)
+		}
+	}()
+
 	logger.Instance().Info(getLogPrefix(config.boundary, config.thisLeaderUUID, "started"), logger.String("hostname", config.thisInstanceLeaderHostname), logger.Uint64("port", config.thisInstanceLeaderPort))
 	for {
 		// check context cancelled
@@ -306,7 +416,7 @@ func (e *Elector) elect(ctx context.Context, wg *sync.WaitGroup, config electorC
 			break
 		}
 
-		won, err := e.tryWinElectionLoop(ctx, config)
+		won, err := tryWinElectionLoop(ctx, config, newLeaderChan)
 		if err != nil {
 			break
 		}
@@ -318,13 +428,13 @@ func (e *Elector) elect(ctx context.Context, wg *sync.WaitGroup, config electorC
 			if config.followerWorker != nil {
 				config.followerWorker.Start(ctx, config.thisLeaderUUID)
 			}
-			e.leaderHeartbeat(ctx, config)
+			leaderHeartbeat(ctx, config)
 			logger.Instance().Info(getLogPrefix(config.boundary, config.thisLeaderUUID, "leadership lost"))
 		} else {
 			if config.followerWorker != nil {
 				config.followerWorker.Start(ctx, config.thisLeaderUUID)
 			}
-			e.followerLeaderWatch(leaderExpiredChan)
+			followerLeaderWatch(ctx, leaderExpiredChan)
 		}
 		stopWorkers(config)
 	}
@@ -333,7 +443,7 @@ func (e *Elector) elect(ctx context.Context, wg *sync.WaitGroup, config electorC
 }
 
 // leaderHeartbeat update ttlExpire to keep leadership. Return if leadership lost, context cancelled, or operations on mongo fail.
-func (e *Elector) leaderHeartbeat(ctx context.Context, config electorConfig) {
+func leaderHeartbeat(ctx context.Context, config electorConfig) {
 	for {
 		select {
 		case <-time.After(time.Second * time.Duration(config.options.LeaderHeartbeatSeconds)):
@@ -342,7 +452,7 @@ func (e *Elector) leaderHeartbeat(ctx context.Context, config electorConfig) {
 		}
 
 		// get a collection, if fail wait and try again
-		collection, err := mongostore.Instance().CollectionLinearWriteRead(e.ctx, collectionName)
+		collection, err := mongostore.Instance().CollectionLinearWriteRead(ctx, collectionName)
 		if err != nil {
 			logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error getting mongo collection"), logger.Error(err))
 			return
@@ -359,7 +469,7 @@ func (e *Elector) leaderHeartbeat(ctx context.Context, config electorConfig) {
 			{"$set", setDoc},
 		}
 		var updateResult *mongo.UpdateResult
-		ctx, cancel := context.WithTimeout(e.ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
 		updateResult, err = collection.UpdateOne(ctx, queueInsertFilter, queueUpdateOnInsert)
 		cancel()
 		if err != nil {
@@ -375,10 +485,10 @@ func (e *Elector) leaderHeartbeat(ctx context.Context, config electorConfig) {
 // tryWinElectionLoop
 // runs tryWinElection in a loop until it wins or loses without or the context is cancelled
 // returns err only if context cancelled
-func (e *Elector) tryWinElectionLoop(ctx context.Context, config electorConfig) (won bool, err error) {
+func tryWinElectionLoop(ctx context.Context, config electorConfig, newLeaderChan chan<- *ElectedLeader) (won bool, err error) {
 	for {
 		// if we win or lose election without unexpected error then return
-		won, err = e.tryWinElection(ctx, config)
+		won, err = tryWinElection(ctx, config, newLeaderChan)
 		if err == nil {
 			return
 		}
@@ -392,21 +502,11 @@ func (e *Elector) tryWinElectionLoop(ctx context.Context, config electorConfig) 
 	}
 }
 
-func (e *Elector) setElectedLeader(newLeader *ElectedLeader) {
-	e.electedLeaderLock.Lock()
-	defer e.electedLeaderLock.Unlock()
-	e.electedLeader = newLeader
-}
-
-func (e *Elector) GetElectedLeader() *ElectedLeader {
-	e.electedLeaderLock.Lock()
-	defer e.electedLeaderLock.Unlock()
-	return e.electedLeader
-}
-
-func (e *Elector) tryWinElection(ctxIn context.Context, config electorConfig) (won bool, err error) {
+func tryWinElection(ctxIn context.Context, config electorConfig, newLeaderChan chan<- *ElectedLeader) (won bool, err error) {
 	var currentLeader *ElectedLeader
-	defer e.setElectedLeader(currentLeader)
+	defer func() {
+		newLeaderChan <- currentLeader
+	}()
 
 	// get a collection, if fail wait and try again
 	var collection *mongo.Collection
@@ -442,7 +542,7 @@ func (e *Elector) tryWinElection(ctxIn context.Context, config electorConfig) (w
 		newLeader := &ElectedLeader{}
 		filter := bson.M{}
 		filter["_id"] = config.boundary
-		ctx, cancel = context.WithTimeout(e.ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
 		err = collection.FindOne(ctx, filter).Decode(newLeader)
 		cancel()
 		if err != nil {
