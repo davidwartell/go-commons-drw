@@ -299,10 +299,10 @@ func leaderManager(
 	}
 }
 
-func doExpireWork(ctxIn context.Context, config electorConfig) (latestLeader *ElectedLeader) {
+func doExpireWork(ctx context.Context, config electorConfig) (latestLeader *ElectedLeader) {
 	var err error
 	var collection *mongo.Collection
-	collection, err = mongostore.Instance().CollectionLinearWriteRead(ctxIn, collectionName)
+	collection, err = mongostore.Instance().CollectionLinearWriteRead(ctx, collectionName)
 	if err != nil {
 		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error"), logger.Error(err))
 		return
@@ -311,8 +311,8 @@ func doExpireWork(ctxIn context.Context, config electorConfig) (latestLeader *El
 	filter := bson.M{}
 	filter["_id"] = config.boundary
 	filter["ttlExpire"] = bson.D{{"$lt", time.Now()}}
-	ctx, cancel := context.WithTimeout(ctxIn, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
-	_, err = collection.DeleteOne(ctx, filter)
+	dbCtx, cancel := context.WithTimeout(ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
+	_, err = collection.DeleteOne(dbCtx, filter)
 	cancel()
 	if err != nil {
 		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on DeleteOne for expireWorker"), logger.Error(err))
@@ -322,8 +322,8 @@ func doExpireWork(ctxIn context.Context, config electorConfig) (latestLeader *El
 	newLeader := &ElectedLeader{}
 	filter = bson.M{}
 	filter["_id"] = config.boundary
-	ctx, cancel = context.WithTimeout(ctxIn, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
-	err = collection.FindOne(ctx, filter).Decode(newLeader)
+	dbCtx, cancel = context.WithTimeout(ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
+	err = collection.FindOne(dbCtx, filter).Decode(newLeader)
 	cancel()
 	if err != nil {
 		if err != mongo.ErrNoDocuments {
@@ -476,8 +476,8 @@ func leaderHeartbeat(ctx context.Context, config electorConfig) {
 			{"$set", setDoc},
 		}
 		var updateResult *mongo.UpdateResult
-		ctx, cancel := context.WithTimeout(ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
-		updateResult, err = collection.UpdateOne(ctx, queueInsertFilter, queueUpdateOnInsert)
+		dbCtx, cancel := context.WithTimeout(ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
+		updateResult, err = collection.UpdateOne(dbCtx, queueInsertFilter, queueUpdateOnInsert)
 		cancel()
 		if err != nil {
 			logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on UpdateOne for leaderHeartbeat"), logger.Error(err))
@@ -509,7 +509,7 @@ func tryWinElectionLoop(ctx context.Context, config electorConfig, newLeaderChan
 	}
 }
 
-func tryWinElection(ctxIn context.Context, config electorConfig, newLeaderChan chan<- *ElectedLeader) (won bool, err error) {
+func tryWinElection(ctx context.Context, config electorConfig, newLeaderChan chan<- *ElectedLeader) (won bool, err error) {
 	var currentLeader *ElectedLeader
 	defer func() {
 		newLeaderChan <- currentLeader
@@ -517,7 +517,7 @@ func tryWinElection(ctxIn context.Context, config electorConfig, newLeaderChan c
 
 	// get a collection, if fail wait and try again
 	var collection *mongo.Collection
-	collection, err = mongostore.Instance().CollectionLinearWriteRead(ctxIn, collectionName)
+	collection, err = mongostore.Instance().CollectionLinearWriteRead(ctx, collectionName)
 	if err != nil {
 		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error getting mongo collection"), logger.Error(err))
 		err = errors.Wrap(err, "error getting mongo collection")
@@ -533,8 +533,8 @@ func tryWinElection(ctxIn context.Context, config electorConfig, newLeaderChan c
 	}
 
 	var insertResult *mongo.InsertOneResult
-	ctx, cancel := context.WithTimeout(ctxIn, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
-	insertResult, err = collection.InsertOne(ctx, thisLeader)
+	dbCtx, cancel := context.WithTimeout(ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
+	insertResult, err = collection.InsertOne(dbCtx, thisLeader)
 	cancel()
 	if err != nil && !mongostore.IsDuplicateKeyError(err) {
 		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on InsertOne for tryWinElection"), logger.Error(err))
@@ -549,8 +549,8 @@ func tryWinElection(ctxIn context.Context, config electorConfig, newLeaderChan c
 		newLeader := &ElectedLeader{}
 		filter := bson.M{}
 		filter["_id"] = config.boundary
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
-		err = collection.FindOne(ctx, filter).Decode(newLeader)
+		dbCtx, cancel = context.WithTimeout(ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
+		err = collection.FindOne(dbCtx, filter).Decode(newLeader)
 		cancel()
 		if err != nil {
 			// this could happen if we failed to win election and then before our find the leader's timeout expires
