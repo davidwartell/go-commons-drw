@@ -12,13 +12,13 @@ require (
 	github.com/sirupsen/logrus v1.8.1
 	github.com/stealthmodesoft/service v1.2.1-0.20210913235040-0c1cf24eb230
 	github.com/stretchr/testify v1.7.0
-	go.mongodb.org/mongo-driver v1.9.0
+	go.mongodb.org/mongo-driver v1.9.1
 	go.uber.org/atomic v1.9.0
 	go.uber.org/zap v1.21.0
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20220412211240-33da011f77ad
-	google.golang.org/grpc v1.45.0
-	google.golang.org/grpc/security/advancedtls v0.0.0-20220413171549-7567a5d96538
+	golang.org/x/sys v0.0.0-20220503163025-988cb79eb6c6
+	google.golang.org/grpc v1.46.0
+	google.golang.org/grpc/security/advancedtls v0.0.0-20220505200824-ee67b3d8e952
 	howett.net/plist v1.0.0
 )
 
@@ -35,10 +35,10 @@ require (
 	github.com/xdg-go/stringprep v1.0.2 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20181117223130-1be2e3e5546d // indirect
 	go.uber.org/multierr v1.8.0 // indirect
-	golang.org/x/crypto v0.0.0-20220411220226-7b82a4e95df4 // indirect
-	golang.org/x/net v0.0.0-20220420153159-1850ba15e1be // indirect
+	golang.org/x/crypto v0.0.0-20220507011949-2cf3adece122 // indirect
+	golang.org/x/net v0.0.0-20220425223048-2871e0cb64e4 // indirect
 	golang.org/x/text v0.3.7 // indirect
-	google.golang.org/genproto v0.0.0-20220414192740-2d67ff6cf2b4 // indirect
+	google.golang.org/genproto v0.0.0-20220505152158-f39f71e6c8f3 // indirect
 	google.golang.org/protobuf v1.28.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
