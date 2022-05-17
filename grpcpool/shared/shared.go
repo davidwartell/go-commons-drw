@@ -151,7 +151,7 @@ func (p *Pool) Get(ctx context.Context) (grpcpool.PoolClientConn, error) {
 			p.conn, err2 = p.factory.NewConnection(ctx)
 			if err2 != nil {
 				p.conn = nil
-				logger.Instance().Error("reconnect failed", logger.Error(err2))
+				logger.Instance().Info("reconnect failed", logger.Error(err2))
 				return nil, err
 			}
 
