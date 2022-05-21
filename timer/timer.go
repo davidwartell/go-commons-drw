@@ -96,7 +96,7 @@ var timeTimerPool sync.Pool
 //  defer tmr.Stop()
 //  for {
 //      tmr.Reset(wait)
-//      switch {
+//      select {
 //      case <-tmr.C:
 //          tmr.Read = true
 //          ...
