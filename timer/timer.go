@@ -92,7 +92,7 @@ var timeTimerPool sync.Pool
 // channel is read from, the next call to Timer.Reset will deadlock.
 // This pattern looks something like:
 //
-//  var timer timeutil.Timer
+//  var timer timer.Timer
 //  defer timer.Stop()
 //  for {
 //      timer.Reset(wait)
