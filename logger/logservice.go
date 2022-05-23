@@ -167,11 +167,14 @@ func (s *Singleton) StartTask(opts ...LoggingOption) {
 	fileEncoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
 		enc.AppendString(t.UTC().Format(time.RFC3339Nano))
 	}
-	instance.loggers[fileKey].logger = zap.New(zapcore.NewCore(
+
+	fileLoggerCore := zapcore.NewCore(
 		zapcore.NewJSONEncoder(fileEncoderConfig),
 		lumberjackSink,
 		instance.loggers[fileKey].level,
-	), zap.AddStacktrace(zap.ErrorLevel), zap.AddCaller(), zap.AddCallerSkip(1))
+	)
+	fileLoggerCore = zapcore.NewSamplerWithOptions(fileLoggerCore, time.Second, 10, 5)
+	instance.loggers[fileKey].logger = zap.New(fileLoggerCore, zap.AddStacktrace(zap.ErrorLevel), zap.AddCaller(), zap.AddCallerSkip(1))
 
 	s.started = true
 	s.Unlock()
@@ -230,11 +233,14 @@ func (s *Singleton) AddLogger(key string, w io.Writer, newLevel Level) {
 	encoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
 		enc.AppendString(t.UTC().Format(time.RFC3339Nano))
 	}
-	instance.loggers[key].logger = zap.New(zapcore.NewCore(
+
+	newloggerCore := zapcore.NewCore(
 		zapcore.NewJSONEncoder(encoderConfig),
 		zapcore.AddSync(w),
 		instance.loggers[key].level,
-	), zap.AddStacktrace(zap.ErrorLevel), zap.AddCaller(), zap.AddCallerSkip(1))
+	)
+	newloggerCore = zapcore.NewSamplerWithOptions(newloggerCore, time.Second, 10, 5)
+	instance.loggers[key].logger = zap.New(newloggerCore, zap.AddStacktrace(zap.ErrorLevel), zap.AddCaller(), zap.AddCallerSkip(1))
 }
 
 func (s *Singleton) SetLoggerEnabled(key string, enabled bool) {
