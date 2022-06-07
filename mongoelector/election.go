@@ -310,7 +310,7 @@ func doExpireWork(ctx context.Context, config electorConfig) (latestLeader *Elec
 
 	filter := bson.M{}
 	filter["_id"] = config.boundary
-	filter["ttlExpire"] = bson.D{{"$lt", time.Now()}}
+	filter["ttlExpire"] = bson.D{{"$lt", time.Now().Add(-1 * time.Second * time.Duration(config.options.LeaderTTLSeconds))}}
 	dbCtx, cancel := context.WithTimeout(ctx, time.Duration(config.options.LeaderHeartbeatSeconds)*time.Second)
 	_, err = collection.DeleteOne(dbCtx, filter)
 	cancel()
