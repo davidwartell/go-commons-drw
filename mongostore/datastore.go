@@ -73,6 +73,7 @@ const (
 	DefaultMaxFailedEnsureIndexesBackoffSeconds = uint64(300)
 	DefaultUsername                             = ""
 	DefaultPassword                             = ""
+	DefaultAuthMechanism                        = "PLAIN"
 	DefaultMaxPoolSize                          = uint64(100)
 	DefaultHost                                 = "localhost:27017"
 	taskName                                    = "Mongo DataStore"
@@ -87,8 +88,10 @@ type Options struct {
 	pingHeartbeatSeconds                 uint64
 	maxFailedEnsureIndexesBackoffSeconds uint64
 	hosts                                []string
+	uri                                  string
 	username                             string
 	password                             string
+	authMechanism                        string // Supported values include "SCRAM-SHA-256", "SCRAM-SHA-1", "MONGODB-CR", "PLAIN", "GSSAPI", "MONGODB-X509", and "MONGODB-AWS".
 	maxPoolSize                          uint64
 }
 
@@ -124,8 +127,10 @@ func Instance() *DataStore {
 				pingHeartbeatSeconds:                 DefaultPingHeartbeatSeconds,
 				maxFailedEnsureIndexesBackoffSeconds: DefaultMaxFailedEnsureIndexesBackoffSeconds,
 				hosts:                                []string{DefaultHost},
+				uri:                                  "",
 				username:                             DefaultUsername,
 				password:                             DefaultPassword,
+				authMechanism:                        DefaultAuthMechanism,
 				maxPoolSize:                          DefaultMaxPoolSize,
 			},
 			managedIndexMap: make(map[string]Index),
@@ -1004,10 +1009,14 @@ func (a *DataStore) connectUnsafeFastWrites(clientCtx context.Context) (client *
 // standardOptions sets up standard options consistent across all clients
 // caller MUST hold a.Lock
 func (a *DataStore) standardOptions() (clientOptions *mongooptions.ClientOptions) {
-	clientOptions = mongooptions.Client().SetHosts(a.options.hosts)
+	if len(a.options.uri) > 0 {
+		clientOptions = mongooptions.Client().ApplyURI(a.options.uri)
+	} else {
+		clientOptions = mongooptions.Client().SetHosts(a.options.hosts)
+	}
 	if a.options.username != "" {
 		credentials := mongooptions.Credential{
-			AuthMechanism: "PLAIN",
+			AuthMechanism: a.options.authMechanism,
 			Username:      a.options.username,
 			Password:      a.options.password,
 		}
@@ -1071,6 +1080,13 @@ func WithHosts(hosts []string) DataStoreOption {
 }
 
 //goland:noinspection GoUnusedExportedFunction
+func WithUri(uri string) DataStoreOption {
+	return func(o *Options) {
+		o.uri = uri
+	}
+}
+
+//goland:noinspection GoUnusedExportedFunction
 func WithUsername(username string) DataStoreOption {
 	return func(o *Options) {
 		o.username = username
@@ -1081,6 +1097,13 @@ func WithUsername(username string) DataStoreOption {
 func WithPassword(password string) DataStoreOption {
 	return func(o *Options) {
 		o.password = password
+	}
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func WithAuthMechanism(authMechanism string) DataStoreOption {
+	return func(o *Options) {
+		o.authMechanism = authMechanism
 	}
 }
 
