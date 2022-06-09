@@ -461,7 +461,7 @@ func leaderHeartbeat(ctx context.Context, config electorConfig) {
 		// get a collection, if fail wait and try again
 		collection, err := mongostore.Instance().CollectionLinearWriteRead(ctx, collectionName)
 		if err != nil {
-			logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error getting mongo collection"), logger.Error(err))
+			logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error getting mongo collection"), logger.Error(err))
 			return
 		}
 
@@ -480,7 +480,7 @@ func leaderHeartbeat(ctx context.Context, config electorConfig) {
 		updateResult, err = collection.UpdateOne(dbCtx, queueInsertFilter, queueUpdateOnInsert)
 		cancel()
 		if err != nil {
-			logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on UpdateOne for leaderHeartbeat"), logger.Error(err))
+			logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error on UpdateOne for leaderHeartbeat"), logger.Error(err))
 			return
 		}
 		if updateResult == nil || updateResult.MatchedCount == 0 {
@@ -519,7 +519,7 @@ func tryWinElection(ctx context.Context, config electorConfig, newLeaderChan cha
 	var collection *mongo.Collection
 	collection, err = mongostore.Instance().CollectionLinearWriteRead(ctx, collectionName)
 	if err != nil {
-		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error getting mongo collection"), logger.Error(err))
+		logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error getting mongo collection"), logger.Error(err))
 		err = errors.Wrap(err, "error getting mongo collection")
 		return false, err
 	}
@@ -537,7 +537,7 @@ func tryWinElection(ctx context.Context, config electorConfig, newLeaderChan cha
 	insertResult, err = collection.InsertOne(dbCtx, thisLeader)
 	cancel()
 	if err != nil && !mongostore.IsDuplicateKeyError(err) {
-		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on InsertOne for tryWinElection"), logger.Error(err))
+		logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error on InsertOne for tryWinElection"), logger.Error(err))
 		err = errors.Wrap(err, "error on InsertOne for tryWinElection")
 		return false, err
 	} else if err == nil && insertResult != nil && insertResult.InsertedID != nil {
@@ -557,7 +557,7 @@ func tryWinElection(ctx context.Context, config electorConfig, newLeaderChan cha
 			if err == mongo.ErrNoDocuments {
 				return false, mongo.ErrNoDocuments
 			}
-			logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on FindOne for tryWinElection"), logger.Error(err))
+			logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error on FindOne for tryWinElection"), logger.Error(err))
 			err = errors.Wrapf(err, "error on FindOne for tryWinElection")
 			return false, err
 		}
