@@ -49,6 +49,8 @@ const ASC = 1
 //goland:noinspection GoUnusedConst
 const DESC = -1
 
+const startupIndexGroupName = "_startup"
+
 var DirtyWriteError = errors.New("dirty write error")
 var ErrorServiceNotStarted = errors.New("getting mongo client failed: service is not started or shutdown")
 
@@ -62,6 +64,11 @@ type Index struct {
 	// options than an existing index will throw an error MongoError: \
 	// Index with name: **MongoIndexName** already exists with different options
 	Model mongo.IndexModel
+}
+
+type indexGroup struct {
+	name    string
+	indexes []Index
 }
 
 const (
@@ -106,8 +113,8 @@ type DataStore struct {
 	ctx                     context.Context
 	cancel                  context.CancelFunc
 	wg                      sync.WaitGroup
-	managedIndexes          []Index
-	managedIndexMap         map[string]Index
+	managedIndexes          []indexGroup
+	allIndexesByPath        map[string]Index // [managedIndexId(idx.CollectionName, idx.Id)] -> Index
 	managedIndexesLock      sync.RWMutex
 }
 
@@ -133,7 +140,7 @@ func Instance() *DataStore {
 				authMechanism:                        DefaultAuthMechanism,
 				maxPoolSize:                          DefaultMaxPoolSize,
 			},
-			managedIndexMap: make(map[string]Index),
+			allIndexesByPath: make(map[string]Index),
 		}
 	})
 	return instance
@@ -292,13 +299,13 @@ func (a *DataStore) StartTask(managedIndexes []Index, opts ...DataStoreOption) {
 		opt(a.options)
 	}
 
-	a.addManagedIndexes(managedIndexes)
+	a.addManagedIndexes(startupIndexGroupName, managedIndexes)
 
 	a.wg.Add(1)
 	go a.runPing(a.ctx, &a.wg)
 
 	a.wg.Add(1)
-	go a.runEnsureIndexes(a.ctx, &a.wg)
+	go a.runEnsureStartupIndexes(a.ctx, &a.wg)
 
 	a.started = true
 	task.LogInfoStruct(taskName, "started")
@@ -555,7 +562,7 @@ func (a *DataStore) runPing(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func (a *DataStore) runEnsureIndexes(ctx context.Context, wg *sync.WaitGroup) {
+func (a *DataStore) runEnsureStartupIndexes(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	task.LogInfoStruct(taskName, "ensuring indexes")
 
@@ -570,7 +577,7 @@ func (a *DataStore) runEnsureIndexes(ctx context.Context, wg *sync.WaitGroup) {
 		Jitter: true,
 	}
 	for {
-		okOrNoRetry := a.ensureIndexes(ctx)
+		okOrNoRetry := a.ensureIndexes(ctx, startupIndexGroupName)
 		if !okOrNoRetry {
 			task.LogErrorStruct(taskName, "error ensuring indexes (will retry)")
 		} else {
@@ -585,9 +592,16 @@ func (a *DataStore) runEnsureIndexes(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
-func (a *DataStore) AddAndEnsureManagedIndexes(ctx context.Context, addManagedIndexes []Index) (ok bool) {
-	a.addManagedIndexes(addManagedIndexes)
-	return a.ensureIndexes(ctx)
+// AddAndEnsureManagedIndexes adds additional indexes to be managed after startup. groupName must be unique and each
+// group must operate on a different set of Collections than another group.  If groupName is already registered
+// then this function does nothing and returns. If tthis group has Collections overlapping with another managed group
+// then panics.
+func (a *DataStore) AddAndEnsureManagedIndexes(ctx context.Context, groupName string, addManagedIndexes []Index) (ok bool) {
+	addOk := a.addManagedIndexes(groupName, addManagedIndexes)
+	if !addOk {
+		return true
+	}
+	return a.ensureIndexes(ctx, groupName)
 }
 
 func (a *DataStore) Index(collectionName string, indexId IndexIdentifier) (idx Index, err error) {
@@ -595,7 +609,7 @@ func (a *DataStore) Index(collectionName string, indexId IndexIdentifier) (idx I
 	defer a.managedIndexesLock.RUnlock()
 	indexFullName := managedIndexId(collectionName, indexId)
 	var exists bool
-	idx, exists = a.managedIndexMap[indexFullName]
+	idx, exists = a.allIndexesByPath[indexFullName]
 	if !exists {
 		err = errors.Errorf("index with identifier %s not found", indexFullName)
 		return
@@ -624,22 +638,70 @@ func managedIndexId(collectionName string, indexId IndexIdentifier) string {
 	return sb.String()
 }
 
-func (a *DataStore) addManagedIndexes(addManagedIndexes []Index) {
+func (a *DataStore) addManagedIndexes(groupName string, addManagedIndexes []Index) (ok bool) {
 	a.managedIndexesLock.Lock()
 	defer a.managedIndexesLock.Unlock()
-	for _, idx := range addManagedIndexes {
-		a.managedIndexMap[managedIndexId(idx.CollectionName, idx.Id)] = idx
+
+	// check duplicate group name
+	for _, group := range a.managedIndexes {
+		if group.name == groupName {
+			// if group already is added do nothing
+			return
+		}
 	}
 
-	var newManagedIndexes []Index
-	for _, idx := range a.managedIndexMap {
-		newManagedIndexes = append(newManagedIndexes, idx)
+	// get all collections from all existing groups
+	allUniqueCollectionNamesMap := make(map[string]indexGroup)
+	for _, group := range a.managedIndexes {
+		for _, idx := range group.indexes {
+			allUniqueCollectionNamesMap[idx.CollectionName] = group
+		}
 	}
-	a.managedIndexes = newManagedIndexes
+
+	mapOfUniqueIndexIdsPerCollectionNewGroup := make(map[string]map[string]struct{})
+	for _, idx := range addManagedIndexes {
+		// make sure this group does not overlap any existing managed collection names
+		if existingGroup, duplicateColl := allUniqueCollectionNamesMap[idx.CollectionName]; duplicateColl {
+			logger.Instance().Panic(
+				"addManagedIndexes encountered index on collection that overlaps with another group",
+				logger.String("collectionName", idx.CollectionName),
+				logger.String("duplicateIdxName", idx.Id.String()),
+				logger.String("existingGroupName", existingGroup.name),
+			)
+		}
+
+		// make sure each index has a unique Id
+		collMap, collMapFound := mapOfUniqueIndexIdsPerCollectionNewGroup[idx.CollectionName]
+		if !collMapFound {
+			collMap = make(map[string]struct{})
+			mapOfUniqueIndexIdsPerCollectionNewGroup[idx.CollectionName] = collMap
+		}
+		if _, duplicateId := collMap[idx.Id.String()]; duplicateId {
+			logger.Instance().Panic(
+				"addManagedIndexes encountered collection with duplicate index Ids",
+				logger.String("collectionName", idx.CollectionName),
+				logger.String("duplicateId", idx.Id.String()),
+				logger.String("groupName", groupName),
+			)
+		}
+		collMap[idx.Id.String()] = struct{}{}
+	}
+
+	// add group to managed indexes
+	a.managedIndexes = append(a.managedIndexes, indexGroup{
+		name:    groupName,
+		indexes: addManagedIndexes,
+	})
+
+	// add indexes to map by index Id
+	for _, idx := range addManagedIndexes {
+		a.allIndexesByPath[managedIndexId(idx.CollectionName, idx.Id)] = idx
+	}
+	return true
 }
 
 // Only return error if connect error.
-func (a *DataStore) ensureIndexes(ctx context.Context) (okOrNoRetry bool) {
+func (a *DataStore) ensureIndexes(ctx context.Context, groupName string) (okOrNoRetry bool) {
 	defer task.HandlePanic(taskName)
 	a.managedIndexesLock.Lock()
 	defer a.managedIndexesLock.Unlock()
@@ -650,38 +712,32 @@ func (a *DataStore) ensureIndexes(ctx context.Context) (okOrNoRetry bool) {
 		return false
 	}
 
-	collectionMapToindexNameMap := make(map[string]map[string]interface{})
 	//
 	// 1. Build map of collections and managed index names
 	//
-	var database *mongo.Database
-	database, err = a.databaseLinearWriteRead(ctx)
-	if err != nil {
-		task.LogErrorStruct(taskName, "ensure indexes: mongo get database failed aborting", logger.Error(err))
-		return false
-	}
-	var collectionNames []string
-	collectionNames, err = database.ListCollectionNames(ctx, bson.D{})
-	if err != nil {
-		task.LogErrorStruct(taskName, "ensure indexes: mongo list collection names failed aborting", logger.Error(err))
-		return false
-	}
-	for _, colName := range collectionNames {
-		collectionMapToindexNameMap[colName] = make(map[string]interface{})
-	}
-	for _, idx := range a.managedIndexes {
-		idxName := idx.MongoIndexName()
-		if collectionMapToindexNameMap[idx.CollectionName] == nil {
-			collectionMapToindexNameMap[idx.CollectionName] = make(map[string]interface{})
+	var theGroup *indexGroup
+	for _, grp := range a.managedIndexes {
+		unshadowedGrp := grp
+		if unshadowedGrp.name == groupName {
+			theGroup = &unshadowedGrp
+			break
 		}
-		collectionMapToindexNameMap[idx.CollectionName][idxName] = struct{}{}
+	}
+
+	collectionMapToIndexNameMap := make(map[string]map[string]struct{})
+	for _, idx := range theGroup.indexes {
+		idxName := idx.MongoIndexName()
+		if collectionMapToIndexNameMap[idx.CollectionName] == nil {
+			collectionMapToIndexNameMap[idx.CollectionName] = make(map[string]struct{})
+		}
+		collectionMapToIndexNameMap[idx.CollectionName][idxName] = struct{}{}
 	}
 
 	//
 	// 2. Find any indexes that are not in our list of what we expect and drop them
 	//
 CollectionLoop:
-	for collectionName := range collectionMapToindexNameMap {
+	for collectionName := range collectionMapToIndexNameMap {
 		var collection *mongo.Collection
 		collection, err = Instance().CollectionLinearWriteRead(ctx, collectionName)
 		if err != nil {
@@ -746,7 +802,8 @@ CollectionLoop:
 				continue
 			}
 
-			if _, ok := collectionMapToindexNameMap[collectionName][nameStr]; !ok {
+			// index does not exist in new managed indexes drop it
+			if _, ok := collectionMapToIndexNameMap[collectionName][nameStr]; !ok {
 				startTime := time.Now()
 				task.LogInfoStruct(
 					taskName,
@@ -792,7 +849,7 @@ CollectionLoop:
 	//
 	// 3. Attempt to create each index.  If the index already exists create will return and do nothing.
 	//
-	for _, idx := range a.managedIndexes {
+	for _, idx := range theGroup.indexes {
 		idxName := idx.MongoIndexName()
 		if idx.Model.Options == nil {
 			idx.Model.Options = mongooptions.Index()
