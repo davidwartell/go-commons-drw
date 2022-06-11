@@ -39,7 +39,7 @@ import (
 
 const electorLogPrefix = "Elector"
 const collectionName = "Elector"
-const defaultLeaderHeartbeatSeconds = uint64(10)
+const defaultLeaderHeartbeatSeconds = uint64(15)
 const defaultLeaderTTLSeconds = 2 * defaultLeaderHeartbeatSeconds
 
 var contextCancelledError = errors.New("context cancelled")
@@ -369,7 +369,7 @@ func expireWorker(ctx context.Context, wg *sync.WaitGroup, config electorConfig,
 		}
 
 		if !indexEnsured {
-			ok := database.AddAndEnsureManagedIndexes(ctx, ManagedIndexes)
+			ok := database.AddAndEnsureManagedIndexes(ctx, strings.ToLower(collectionName), ManagedIndexes)
 			if !ok {
 				logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error ensuring indexes"), logger.Stack("stacktrace"))
 				continue
