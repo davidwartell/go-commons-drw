@@ -1048,7 +1048,7 @@ func (a *DataStore) connectUnsafeFastWrites(clientCtx context.Context) (client *
 	task.LogInfoStruct(taskName, "connecting to mongo for unsafe/fast operations")
 
 	clientOptions := a.standardOptions()
-	clientOptions.SetReadPreference(readpref.Nearest())
+	clientOptions.SetReadPreference(readpref.Primary()) // read from primary for linear reads
 	clientOptions.SetWriteConcern(writeconcern.New(writeconcern.J(false), writeconcern.W(1)))
 	clientOptions.SetReadConcern(readconcern.Available())
 
