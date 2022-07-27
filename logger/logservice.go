@@ -21,6 +21,7 @@ package logger
 
 import (
 	"context"
+	"fmt"
 	"github.com/mattn/go-colorable"
 	"github.com/natefinch/lumberjack"
 	backupLogger "github.com/sirupsen/logrus"
@@ -350,30 +351,46 @@ func (s *Singleton) ErrorIgnoreCancel(ctx context.Context, msg string, fields ..
 func (s *Singleton) Panic(msg string, fields ...Field) {
 	s.RLock()
 	defer s.RUnlock()
+	var foundLogger bool
 	for _, logInstance := range s.loggers {
 		if logInstance.enabled.Load() {
+			foundLogger = true
 			logInstance.logger.Panic(msg, fieldsToZapFields(fields...)...)
 		}
+	}
+	if !foundLogger {
+		panic(msg)
 	}
 }
 
 func (s *Singleton) DPanic(msg string, fields ...Field) {
 	s.RLock()
 	defer s.RUnlock()
+	var foundLogger bool
 	for _, logInstance := range s.loggers {
 		if logInstance.enabled.Load() {
+			foundLogger = true
 			logInstance.logger.DPanic(msg, fieldsToZapFields(fields...)...)
 		}
+	}
+	if !foundLogger {
+		panic(msg)
 	}
 }
 
 func (s *Singleton) Fatal(msg string, fields ...Field) {
 	s.RLock()
 	defer s.RUnlock()
+	var foundLogger bool
 	for _, logInstance := range s.loggers {
 		if logInstance.enabled.Load() {
+			foundLogger = true
 			logInstance.logger.Fatal(msg, fieldsToZapFields(fields...)...)
 		}
+	}
+	if !foundLogger {
+		fmt.Println(msg)
+		os.Exit(1)
 	}
 }
 
@@ -452,9 +469,18 @@ func (s *Singleton) ErrorIgnoreCancelUnstruct(ctx context.Context, args ...inter
 func (s *Singleton) PanicUnstruct(args ...interface{}) {
 	s.RLock()
 	defer s.RUnlock()
+	var foundLogger bool
 	for _, logInstance := range s.loggers {
 		if logInstance.enabled.Load() {
+			foundLogger = true
 			logInstance.logger.Sugar().Panic(args...)
+		}
+	}
+	if !foundLogger {
+		if len(args) >= 1 {
+			if str, ok := args[0].(string); ok {
+				panic(str)
+			}
 		}
 	}
 }
@@ -463,9 +489,18 @@ func (s *Singleton) PanicUnstruct(args ...interface{}) {
 func (s *Singleton) DPanicUnstruct(args ...interface{}) {
 	s.RLock()
 	defer s.RUnlock()
+	var foundLogger bool
 	for _, logInstance := range s.loggers {
 		if logInstance.enabled.Load() {
+			foundLogger = true
 			logInstance.logger.Sugar().DPanic(args...)
+		}
+	}
+	if !foundLogger {
+		if len(args) >= 1 {
+			if str, ok := args[0].(string); ok {
+				panic(str)
+			}
 		}
 	}
 }
@@ -474,10 +509,20 @@ func (s *Singleton) DPanicUnstruct(args ...interface{}) {
 func (s *Singleton) FatalUnstruct(args ...interface{}) {
 	s.RLock()
 	defer s.RUnlock()
+	var foundLogger bool
 	for _, logInstance := range s.loggers {
 		if logInstance.enabled.Load() {
+			foundLogger = true
 			logInstance.logger.Sugar().Fatal(args...)
 		}
+	}
+	if !foundLogger {
+		if len(args) >= 1 {
+			if str, ok := args[0].(string); ok {
+				fmt.Println(str)
+			}
+		}
+		os.Exit(1)
 	}
 }
 
@@ -556,10 +601,15 @@ func (s *Singleton) ErrorfIgnoreCancelUnstruct(ctx context.Context, format strin
 func (s *Singleton) PanicfUnstruct(format string, args ...interface{}) {
 	s.RLock()
 	defer s.RUnlock()
+	var foundLogger bool
 	for _, logInstance := range s.loggers {
 		if logInstance.enabled.Load() {
+			foundLogger = true
 			logInstance.logger.Sugar().Panicf(format, args...)
 		}
+	}
+	if !foundLogger {
+		panic(fmt.Sprintf(format, args))
 	}
 }
 
@@ -567,10 +617,15 @@ func (s *Singleton) PanicfUnstruct(format string, args ...interface{}) {
 func (s *Singleton) DPanicfUnstruct(format string, args ...interface{}) {
 	s.RLock()
 	defer s.RUnlock()
+	var foundLogger bool
 	for _, logInstance := range s.loggers {
 		if logInstance.enabled.Load() {
+			foundLogger = true
 			logInstance.logger.Sugar().DPanicf(format, args...)
 		}
+	}
+	if !foundLogger {
+		panic(fmt.Sprintf(format, args))
 	}
 }
 
@@ -578,10 +633,16 @@ func (s *Singleton) DPanicfUnstruct(format string, args ...interface{}) {
 func (s *Singleton) FatalfUnstruct(format string, args ...interface{}) {
 	s.RLock()
 	defer s.RUnlock()
+	var foundLogger bool
 	for _, logInstance := range s.loggers {
 		if logInstance.enabled.Load() {
+			foundLogger = true
 			logInstance.logger.Sugar().Fatalf(format, args...)
 		}
+	}
+	if !foundLogger {
+		fmt.Println(fmt.Sprintf(format, args))
+		os.Exit(1)
 	}
 }
 
