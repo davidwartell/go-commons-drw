@@ -101,9 +101,7 @@ func UUIDFromString(s string) (UUID, error) {
 }
 
 func (g UUID) Clone() (clone UUID) {
-	for i, b := range g.id {
-		clone.id[i] = b
-	}
+	clone.id = g.id
 	return
 }
 

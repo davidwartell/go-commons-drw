@@ -609,7 +609,7 @@ func (s *Singleton) PanicfUnstruct(format string, args ...interface{}) {
 		}
 	}
 	if !foundLogger {
-		panic(fmt.Sprintf(format, args))
+		panic(fmt.Sprintf(format, args...))
 	}
 }
 
@@ -625,7 +625,7 @@ func (s *Singleton) DPanicfUnstruct(format string, args ...interface{}) {
 		}
 	}
 	if !foundLogger {
-		panic(fmt.Sprintf(format, args))
+		panic(fmt.Sprintf(format, args...))
 	}
 }
 
@@ -641,7 +641,7 @@ func (s *Singleton) FatalfUnstruct(format string, args ...interface{}) {
 		}
 	}
 	if !foundLogger {
-		fmt.Println(fmt.Sprintf(format, args))
+		fmt.Println(fmt.Sprintf(format, args...))
 		os.Exit(1)
 	}
 }
