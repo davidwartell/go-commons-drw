@@ -32,11 +32,12 @@ import (
 )
 
 type MutualTLSFactory struct {
-	credentials      credentials.TransportCredentials
-	dialAddr         string
-	keepAliveTime    time.Duration
-	keepAliveTimeout time.Duration
-	pingFunc         PingFunc
+	credentials          credentials.TransportCredentials
+	dialAddr             string
+	keepAliveTime        time.Duration
+	keepAliveTimeout     time.Duration
+	pingFunc             PingFunc
+	useSnappyCompression bool
 }
 
 // PingFunc should send a GRPC ping/pong to the other side of conn.  Returns err or latency.
@@ -51,12 +52,14 @@ func NewMutualTLSFactory(
 	keepAliveTime time.Duration,
 	keepAliveTimeout time.Duration,
 	pingFunc PingFunc,
+	useSnappyCompression bool,
 ) (MutualTLSFactory, error) {
 	var err error
 	factory := MutualTLSFactory{
-		keepAliveTime:    keepAliveTime,
-		keepAliveTimeout: keepAliveTimeout,
-		pingFunc:         pingFunc,
+		keepAliveTime:        keepAliveTime,
+		keepAliveTimeout:     keepAliveTimeout,
+		pingFunc:             pingFunc,
+		useSnappyCompression: useSnappyCompression,
 	}
 	factory.credentials, err = LoadTLSCredentials(caCertPEM, clientCertPEM, clientKeyPEM)
 	if err != nil {
@@ -70,16 +73,28 @@ func NewMutualTLSFactory(
 }
 
 func (f MutualTLSFactory) NewConnection(ctx context.Context) (*grpc.ClientConn, error) {
-	conn, err := grpc.DialContext(
-		ctx,
-		f.dialAddr,
+	return f.NewConnectionWithDialOpts(ctx)
+}
+
+func (f MutualTLSFactory) NewConnectionWithDialOpts(ctx context.Context, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	allOpts := []grpc.DialOption{
 		grpc.WithTransportCredentials(f.credentials),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                f.keepAliveTime,
 			Timeout:             f.keepAliveTimeout,
 			PermitWithoutStream: true,
 		}),
-	)
+	}
+
+	if f.useSnappyCompression {
+		allOpts = append(allOpts, grpc.WithDefaultCallOptions(grpc.UseCompressor(SnappyCompressor())))
+	}
+
+	if len(opts) > 0 {
+		allOpts = append(allOpts, opts...)
+	}
+
+	conn, err := grpc.DialContext(ctx, f.dialAddr, allOpts...)
 	if err != nil {
 		if conn != nil {
 			_ = conn.Close()
