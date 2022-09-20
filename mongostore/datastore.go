@@ -105,17 +105,19 @@ type Options struct {
 type DataStore struct {
 	sync.RWMutex
 	task.BaseTask
-	started                 bool
-	options                 *Options
-	mongoClient             *mongo.Client
-	mongoClientUnsafeFast   *mongo.Client
-	mongoClientFastestReads *mongo.Client
-	ctx                     context.Context
-	cancel                  context.CancelFunc
-	wg                      sync.WaitGroup
-	managedIndexes          []indexGroup
-	allIndexesByPath        map[string]Index // [managedIndexId(idx.CollectionName, idx.Id)] -> Index
-	managedIndexesLock      sync.RWMutex
+	started                           bool
+	options                           *Options
+	mongoClientForWatch               *mongo.Client
+	mongoClientLinearReadWrite        *mongo.Client
+	mongoClientUnsafeFast             *mongo.Client
+	mongoClientReadNearest            *mongo.Client
+	mongoClientReadSecondaryPreferred *mongo.Client
+	ctx                               context.Context
+	cancel                            context.CancelFunc
+	wg                                sync.WaitGroup
+	managedIndexes                    []indexGroup
+	allIndexesByPath                  map[string]Index // [managedIndexId(idx.CollectionName, idx.Id)] -> Index
+	managedIndexesLock                sync.RWMutex
 }
 
 var instance *DataStore
@@ -362,59 +364,44 @@ func (a *DataStore) StopTask() {
 	var disconnectWg sync.WaitGroup
 
 	disconnectWg.Add(1)
-	go func() {
-		defer disconnectWg.Done()
-		if a.mongoClient != nil {
-			ctx, cancel := context.WithTimeout(
-				context.Background(),
-				time.Duration(a.options.timeoutSecondsShutdown)*time.Second,
-			)
-			defer cancel()
-			err := a.mongoClient.Disconnect(ctx)
-			if err != nil {
-				task.LogErrorStruct(taskName, "shutdown: error on disconnect of mongo client", logger.Error(err))
-			}
-			a.mongoClient = nil
-		}
-	}()
+	go disconnectClient(&disconnectWg, a.mongoClientLinearReadWrite, a.options.timeoutSecondsShutdown)
 
 	disconnectWg.Add(1)
-	go func() {
-		defer disconnectWg.Done()
-		if a.mongoClientUnsafeFast != nil {
-			ctx, cancel := context.WithTimeout(
-				context.Background(),
-				time.Duration(a.options.timeoutSecondsShutdown)*time.Second,
-			)
-			defer cancel()
-			err := a.mongoClientUnsafeFast.Disconnect(ctx)
-			if err != nil {
-				task.LogErrorStruct(taskName, "shutdown: error on disconnect of mongo client", logger.Error(err))
-			}
-			a.mongoClientUnsafeFast = nil
-		}
-	}()
+	go disconnectClient(&disconnectWg, a.mongoClientUnsafeFast, a.options.timeoutSecondsShutdown)
 
 	disconnectWg.Add(1)
-	go func() {
-		defer disconnectWg.Done()
-		if a.mongoClientFastestReads != nil {
-			ctx, cancel := context.WithTimeout(
-				context.Background(),
-				time.Duration(a.options.timeoutSecondsShutdown)*time.Second,
-			)
-			defer cancel()
-			err := a.mongoClientFastestReads.Disconnect(ctx)
-			if err != nil {
-				task.LogErrorStruct(taskName, "shutdown: error on disconnect of mongo client", logger.Error(err))
-			}
-			a.mongoClientFastestReads = nil
-		}
-	}()
+	go disconnectClient(&disconnectWg, a.mongoClientReadNearest, a.options.timeoutSecondsShutdown)
+
+	disconnectWg.Add(1)
+	go disconnectClient(&disconnectWg, a.mongoClientReadSecondaryPreferred, a.options.timeoutSecondsShutdown)
+
+	disconnectWg.Add(1)
+	go disconnectClient(&disconnectWg, a.mongoClientForWatch, a.options.timeoutSecondsShutdown)
+
 	disconnectWg.Wait()
+	a.mongoClientUnsafeFast = nil
+	a.mongoClientReadNearest = nil
+	a.mongoClientLinearReadWrite = nil
+	a.mongoClientReadSecondaryPreferred = nil
+	a.mongoClientForWatch = nil
 
 	a.started = false
 	task.LogInfoStruct(taskName, "stopped")
+}
+
+func disconnectClient(wg *sync.WaitGroup, client *mongo.Client, timeoutSecondsShutdown uint64) {
+	defer wg.Done()
+	if client != nil {
+		ctx, cancel := context.WithTimeout(
+			context.Background(),
+			time.Duration(timeoutSecondsShutdown)*time.Second,
+		)
+		defer cancel()
+		err := client.Disconnect(ctx)
+		if err != nil {
+			task.LogErrorStruct(taskName, "shutdown: error on disconnect of mongo client", logger.Error(err))
+		}
+	}
 }
 
 func (a *DataStore) databaseLinearWriteRead(ctx context.Context) (*mongo.Database, error) {
@@ -453,6 +440,30 @@ func (a *DataStore) databaseReadNearest(ctx context.Context) (*mongo.Database, e
 	return client.Database(dbName), nil
 }
 
+func (a *DataStore) databaseReadSecondaryPreferred(ctx context.Context) (*mongo.Database, error) {
+	client, err := a.clientReadSecondaryPreferred(ctx)
+	if err != nil {
+		task.LogErrorStruct(taskName, "error getting collection from client", logger.Error(err))
+		return nil, err
+	}
+	a.RLock()
+	dbName := a.options.databaseName
+	a.RUnlock()
+	return client.Database(dbName), nil
+}
+
+func (a *DataStore) databaseForWatch(ctx context.Context) (*mongo.Database, error) {
+	client, err := a.clientForWatch(ctx)
+	if err != nil {
+		task.LogErrorStruct(taskName, "error getting collection from client", logger.Error(err))
+		return nil, err
+	}
+	a.RLock()
+	dbName := a.options.databaseName
+	a.RUnlock()
+	return client.Database(dbName), nil
+}
+
 // Collection calls CollectionLinearWriteRead()
 func (a *DataStore) Collection(ctx context.Context, name string) (*mongo.Collection, error) {
 	return a.CollectionLinearWriteRead(ctx, name)
@@ -467,10 +478,8 @@ func (a *DataStore) Collection(ctx context.Context, name string) (*mongo.Collect
 // This connection supplies: "Casual Consistency" in a sharded cluster inside a single client thread.
 // https://www.mongodb.com/docs/manual/core/read-isolation-consistency-recency/#std-label-sessions
 //
-//
 // Note: readpref.Primary() is critical for reads to consistently return results in the same go routine immediately
 // after an insert.  And perhaps not well documented.
-//
 func (a *DataStore) CollectionLinearWriteRead(ctx context.Context, name string) (*mongo.Collection, error) {
 	database, err := a.databaseLinearWriteRead(ctx)
 	if err != nil {
@@ -480,8 +489,8 @@ func (a *DataStore) CollectionLinearWriteRead(ctx context.Context, name string) 
 }
 
 // CollectionUnsafeFastWrites creates a connection with:
-// - readconcern.Available()
-// - readpref.Nearest()
+// - readconcern.Local()
+// - readpref.Primary()
 // - writeconcern.J(false)
 // - writeconcern.W(1)
 func (a *DataStore) CollectionUnsafeFastWrites(ctx context.Context, name string) (*mongo.Collection, error) {
@@ -499,6 +508,34 @@ func (a *DataStore) CollectionUnsafeFastWrites(ctx context.Context, name string)
 // - writeconcern.WMajority()
 func (a *DataStore) CollectionReadNearest(ctx context.Context, name string) (*mongo.Collection, error) {
 	database, err := a.databaseReadNearest(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return database.Collection(name), nil
+}
+
+// CollectionReadSecondaryPreferred creates a connection with:
+// - readconcern.Majority()
+// - readpref.SecondaryPreferred()
+// - writeconcern.J(true)
+// - writeconcern.WMajority()
+func (a *DataStore) CollectionReadSecondaryPreferred(ctx context.Context, name string) (*mongo.Collection, error) {
+	database, err := a.databaseReadSecondaryPreferred(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return database.Collection(name), nil
+}
+
+// CollectionForWatch creates a connection with:
+// - readconcern.Majority()
+// - readpref.SecondaryPreferred()
+// - writeconcern.J(true)
+// - writeconcern.WMajority()
+//
+// This is recommended for use with Change Streams (Watch()).  The write concerns are just in case you use it for writes by accident.
+func (a *DataStore) CollectionForWatch(ctx context.Context, name string) (*mongo.Collection, error) {
+	database, err := a.databaseForWatch(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -947,8 +984,8 @@ func (a *DataStore) clientReadNearest(ctx context.Context) (client *mongo.Client
 		a.RUnlock()
 		err = ErrorServiceNotStarted
 		return
-	} else if a.mongoClientFastestReads != nil {
-		client = a.mongoClientFastestReads
+	} else if a.mongoClientReadNearest != nil {
+		client = a.mongoClientReadNearest
 		a.RUnlock()
 		return
 	} else {
@@ -959,12 +996,30 @@ func (a *DataStore) clientReadNearest(ctx context.Context) (client *mongo.Client
 	return
 }
 
+func (a *DataStore) clientReadSecondaryPreferred(ctx context.Context) (client *mongo.Client, err error) {
+	a.RLock()
+	if !a.started {
+		a.RUnlock()
+		err = ErrorServiceNotStarted
+		return
+	} else if a.mongoClientReadSecondaryPreferred != nil {
+		client = a.mongoClientReadSecondaryPreferred
+		a.RUnlock()
+		return
+	} else {
+		a.RUnlock()
+	}
+
+	client, err = a.connectReadSecondaryPreferred(ctx)
+	return
+}
+
 func (a *DataStore) connectReadNearest(clientCtx context.Context) (client *mongo.Client, err error) {
 	a.Lock()
 	defer a.Unlock()
 
-	if a.mongoClientFastestReads != nil {
-		client = a.mongoClientFastestReads
+	if a.mongoClientReadNearest != nil {
+		client = a.mongoClientReadNearest
 		return
 	}
 
@@ -983,7 +1038,37 @@ func (a *DataStore) connectReadNearest(clientCtx context.Context) (client *mongo
 		err = errors.Wrap(err, "error connecting to mongo")
 		return
 	}
-	a.mongoClientFastestReads = client
+	a.mongoClientReadNearest = client
+
+	task.LogInfoStruct(taskName, "connected to mongo")
+	return
+}
+
+func (a *DataStore) connectReadSecondaryPreferred(clientCtx context.Context) (client *mongo.Client, err error) {
+	a.Lock()
+	defer a.Unlock()
+
+	if a.mongoClientReadSecondaryPreferred != nil {
+		client = a.mongoClientReadSecondaryPreferred
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(clientCtx, time.Duration(a.options.connectTimeoutSeconds)*time.Second)
+	defer cancel()
+
+	task.LogInfoStruct(taskName, "connecting to mongo")
+
+	clientOptions := a.standardOptions()
+	clientOptions.SetReadPreference(readpref.SecondaryPreferred())
+	clientOptions.SetWriteConcern(writeconcern.New(writeconcern.J(true), writeconcern.WMajority(), writeconcern.WTimeout(a.queryTimeout())))
+	clientOptions.SetReadConcern(readconcern.Majority())
+
+	client, err = mongo.Connect(ctx, clientOptions)
+	if err != nil {
+		err = errors.Wrap(err, "error connecting to mongo")
+		return
+	}
+	a.mongoClientReadSecondaryPreferred = client
 
 	task.LogInfoStruct(taskName, "connected to mongo")
 	return
@@ -995,8 +1080,8 @@ func (a *DataStore) clientLinearWriteRead(ctx context.Context) (client *mongo.Cl
 		a.RUnlock()
 		err = ErrorServiceNotStarted
 		return
-	} else if a.mongoClient != nil {
-		client = a.mongoClient
+	} else if a.mongoClientLinearReadWrite != nil {
+		client = a.mongoClientLinearReadWrite
 		a.RUnlock()
 		return
 	} else {
@@ -1007,12 +1092,30 @@ func (a *DataStore) clientLinearWriteRead(ctx context.Context) (client *mongo.Cl
 	return
 }
 
-func (a *DataStore) connectLinearWriteRead(clientCtx context.Context) (client *mongo.Client, err error) {
+func (a *DataStore) clientForWatch(ctx context.Context) (client *mongo.Client, err error) {
+	a.RLock()
+	if !a.started {
+		a.RUnlock()
+		err = ErrorServiceNotStarted
+		return
+	} else if a.mongoClientForWatch != nil {
+		client = a.mongoClientForWatch
+		a.RUnlock()
+		return
+	} else {
+		a.RUnlock()
+	}
+
+	client, err = a.connectForWatch(ctx)
+	return
+}
+
+func (a *DataStore) connectForWatch(clientCtx context.Context) (client *mongo.Client, err error) {
 	a.Lock()
 	defer a.Unlock()
 
-	if a.mongoClient != nil {
-		client = a.mongoClient
+	if a.mongoClientForWatch != nil {
+		client = a.mongoClientForWatch
 		return
 	}
 
@@ -1023,6 +1126,36 @@ func (a *DataStore) connectLinearWriteRead(clientCtx context.Context) (client *m
 
 	clientOptions := a.standardOptions()
 	clientOptions.SetReadConcern(readconcern.Majority())
+	clientOptions.SetReadPreference(readpref.SecondaryPreferred())
+	clientOptions.SetWriteConcern(writeconcern.New(writeconcern.J(true), writeconcern.WMajority(), writeconcern.WTimeout(a.queryTimeout())))
+
+	client, err = mongo.Connect(ctx, clientOptions)
+	if err != nil {
+		err = errors.Wrap(err, "error connecting to mongo")
+		return
+	}
+	a.mongoClientForWatch = client
+
+	task.LogInfoStruct(taskName, "connected to mongo")
+	return
+}
+
+func (a *DataStore) connectLinearWriteRead(clientCtx context.Context) (client *mongo.Client, err error) {
+	a.Lock()
+	defer a.Unlock()
+
+	if a.mongoClientLinearReadWrite != nil {
+		client = a.mongoClientLinearReadWrite
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(clientCtx, time.Duration(a.options.connectTimeoutSeconds)*time.Second)
+	defer cancel()
+
+	task.LogInfoStruct(taskName, "connecting to mongo")
+
+	clientOptions := a.standardOptions()
+	clientOptions.SetReadConcern(readconcern.Linearizable())
 	clientOptions.SetReadPreference(readpref.Primary()) // connect primary for reads or linear reads in same go routine will some times fail to find documents you just inserted in same routine
 	clientOptions.SetWriteConcern(writeconcern.New(writeconcern.J(true), writeconcern.WMajority(), writeconcern.WTimeout(a.queryTimeout())))
 
@@ -1031,7 +1164,7 @@ func (a *DataStore) connectLinearWriteRead(clientCtx context.Context) (client *m
 		err = errors.Wrap(err, "error connecting to mongo")
 		return
 	}
-	a.mongoClient = client
+	a.mongoClientLinearReadWrite = client
 
 	task.LogInfoStruct(taskName, "connected to mongo")
 	return
@@ -1072,7 +1205,7 @@ func (a *DataStore) connectUnsafeFastWrites(clientCtx context.Context) (client *
 	clientOptions := a.standardOptions()
 	clientOptions.SetReadPreference(readpref.Primary()) // read from primary for linear reads
 	clientOptions.SetWriteConcern(writeconcern.New(writeconcern.J(false), writeconcern.W(1)))
-	clientOptions.SetReadConcern(readconcern.Available())
+	clientOptions.SetReadConcern(readconcern.Local())
 
 	client, err = mongo.Connect(ctx, clientOptions)
 	if err != nil {
