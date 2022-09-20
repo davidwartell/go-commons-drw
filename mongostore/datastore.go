@@ -196,32 +196,51 @@ func TruncateUUIDSliceForMongoDoc(slice []mongouuid.UUID) (newSlice []mongouuid.
 }
 
 // CheckForDirtyWriteOnUpsert is expected to be used like this:
-// filter := bson.D{
-//		{"_id", device.Id},
-//      // where device.DirtyWriteGuard is 0 on new or == to the dirtyWriteGuard field of the entity we expect in the collection
-//		{"dirtyWriteGuard", device.DirtyWriteGuard},
+// Add a field to your struct called "DirtyWriteGuard"
+//
+//	type Person struct {
+//	  ...
+//	  DirtyWriteGuard uint64  `bson:"dirtyWriteGuard"`
 //	}
-//	update := bson.D{
-//		{"$set", impl.toBson(device)},
-//		{"$setOnInsert", impl.setOnInsertToBson(device)},
-//	}
-//	updateOptions := &options.UpdateOptions{}
-//	var updateResult *mongo.UpdateResult
-//	updateResult, err = deviceCollection.UpdateOne(ctx, filter, update, updateOptions.SetUpsert(true))
-//	err = mongostore.CheckForDirtyWriteOnUpsert(updateResult, err)
-//	if err != nil {
-//		err2 := errors.Wrapf(err, "error on UpdateOne for Device: %v", err)
-//		if err != mongostore.DirtyWriteError {
-//			logger.Instance().ErrorIgnoreCancelUnstruct(ctx, err2)
+//
+// Then when you update mongo:
+//
+//		filter := bson.D{
+//			{"_id", person.Id},
+//	     	// where device.DirtyWriteGuard is 0 on new or == to the dirtyWriteGuard field of the entity we expect in the collection
+//			{"dirtyWriteGuard", person.DirtyWriteGuard},
 //		}
-//		return err2
-//	}
+//
+//		// increment the counter before update or insert
+//		person.DirtyWriteGuard++
+//		defer func() {
+//			if err != nil {
+//				// if upsert fails decrement the counter
+//				person.DirtyWriteGuard--
+//			}
+//		}()
+//
+//		updateOptions := &options.ReplaceOptions{}
+//		updateOptions.SetUpsert(true)
+//
+//		var updateResult *mongo.UpdateResult
+//		updateResult, err = collection.ReplaceOne(ctx, filter, person, updateOptions)
+//		err = mongostore.CheckForDirtyWriteOnUpsert(updateResult, err)
+//		if err != nil {
+//			if err != mongostore.DirtyWriteError {
+//				// only log or mess with err returned if not a DirtyWriteError
+//				logger.Instance().ErrorIgnoreCancel(ctx, "error on ReplaceOne for Person", logger.Error(err))
+//				err = errors.Wrap(err, "error on ReplaceOne for Person")
+//			}
+//			return
+//		}
 //
 // In the tested and expected case mongo will return E11000 duplicate key error collection in case of dirty write. This
 // is because no document will exist that matches _id and dirtyWriteGuard causing mongo to attempt to insert a new document
 // which will return duplicate key error.
 // In case of no dirty write and no error returned by the UpdateOne() we expect either an insert (updateResult.UpsertedID
 // has a value) or an updated existing document (updateResult.MatchedCount == 1).
+//
 //goland:noinspection GoUnusedExportedFunction
 func CheckForDirtyWriteOnUpsert(updateResult *mongo.UpdateResult, inputErr error) (err error) {
 	if inputErr != nil {
