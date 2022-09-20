@@ -1083,6 +1083,7 @@ func (a *DataStore) standardOptions() (clientOptions *mongooptions.ClientOptions
 	clientOptions.SetRetryReads(true)
 	clientOptions.SetMaxPoolSize(a.options.maxPoolSize)
 	clientOptions.SetMinPoolSize(1)
+	clientOptions.SetCompressors([]string{"snappy"})
 	return
 }
 
