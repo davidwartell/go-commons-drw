@@ -96,6 +96,7 @@ var once sync.Once
 
 // WithProductNameShort sets the name of your product used in log file names.
 // example: logger.Instance().StartTask(logger.WithProductNameShort("your-product-name-here"))
+//
 //goland:noinspection GoUnusedExportedFunction
 func WithProductNameShort(productNameShort string) LoggingOption {
 	return func(o *Options) {
@@ -312,6 +313,13 @@ func (s *Singleton) Info(msg string, fields ...Field) {
 			logInstance.logger.Info(msg, fieldsToZapFields(fields...)...)
 		}
 	}
+}
+
+func (s *Singleton) InfoIgnoreCancel(ctx context.Context, msg string, fields ...Field) {
+	if ctx.Err() != nil {
+		return
+	}
+	s.Info(msg, fields...)
 }
 
 func (s *Singleton) Warn(msg string, fields ...Field) {
