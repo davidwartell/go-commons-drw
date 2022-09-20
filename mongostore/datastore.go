@@ -266,26 +266,27 @@ func CheckForDirtyWriteOnUpsert(updateResult *mongo.UpdateResult, inputErr error
 // The caller of RetryDirtyWrite needs to ensure it has logic to refresh the copy of the object or objects its updating
 // with a fresh copy from the collection.
 //
-//  Example:
-//  // This code will be run repeatedly until there is no DirtyWriteError or the max retries is exceeded.
-// 	err = mongostore.RetryDirtyWrite(func() error {
-//		var retryErr error
+//	 Example:
+//	 // This code will be run repeatedly until there is no DirtyWriteError or the max retries is exceeded.
+//		err = mongostore.RetryDirtyWrite(func() error {
+//			var retryErr error
 //
-//		// query an entity from the collection that has a dirtyWriteGuard model.Version (uint64) field
-//		var existingDevice *model.Device
-//		existingDevice, retryErr = imongo.Device.FindOne(apiCtx.Ctx(), device.Id)
+//			// query an entity from the collection that has a dirtyWriteGuard uint64 field
+//			var existingPerson *Person
+//			existingPerson, retryErr = YourFunctionThatDoesMongoFind(ctx, personId)
 //
-//		// ...logic that makes changes existingDevice which could be stale
+//			// ...logic that makes changes existingPerson which could be now stale
 //
-//		// imongo.Device.Upsert() can return DirtyWriteError
-//		if retryErr = imongo.Device.Upsert(apiCtx.Ctx(), existingDevice, deviceEndpoint); retryErr != nil {
-//			if retryErr != mongostore.DirtyWriteError {
-//				logger.Instance().ErrorIgnoreCancelUnstruct(apiCtx.Ctx(), retryErr)
+//			// YourFunctionThatDoesMongoUpsert can return DirtyWriteError
+//			if retryErr = YourFunctionThatDoesMongoUpsert(ctx, existingPerson); retryErr != nil {
+//				if retryErr != mongostore.DirtyWriteError {
+//					logger.Instance().ErrorIgnoreCancel(ctx, "error in YourFunctionThatDoesMongoUpsert", logger.Error(retryErr))
+//				}
+//				return retryErr
 //			}
-//			return retryErr
-//		}
-//		return nil
-//	})
+//			return nil
+//		})
+//
 //goland:noinspection GoUnusedExportedFunction
 func RetryDirtyWrite(dirtyWriteFunc DirtyWriteProtectedFunc) (err error) {
 	var retries uint64
