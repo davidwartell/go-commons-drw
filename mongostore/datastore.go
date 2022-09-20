@@ -520,7 +520,7 @@ func (a *DataStore) Ping(ctx context.Context) error {
 	ctx, cancel = a.ContextTimeout(ctx)
 	defer cancel()
 
-	client, err = a.clientLinearWriteRead(ctx)
+	client, err = a.clientUnsafeFastWrites(ctx)
 	if err != nil {
 		task.LogErrorStruct(taskName, "error getting client for ping", logger.Error(err))
 		return err
