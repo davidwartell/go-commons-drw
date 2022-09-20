@@ -457,7 +457,7 @@ func (a *DataStore) Collection(ctx context.Context, name string) (*mongo.Collect
 }
 
 // CollectionLinearWriteRead creates a connection with:
-// - readconcern.Majority()
+// - readconcern.Linearizable()
 // - readpref.Primary()
 // - writeconcern.J(true)
 // - writeconcern.WMajority()
