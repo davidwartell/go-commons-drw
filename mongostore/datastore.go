@@ -151,6 +151,7 @@ var mongouuidSliceType = reflect.TypeOf([]mongouuid.UUID{})
 
 // TruncateStringSliceForMongoDoc ensures a string slice will fit in the mongodb doc size limit and truncates the slice
 // if necessary logging a warning.
+//
 //goland:noinspection GoUnusedExportedFunction
 func TruncateStringSliceForMongoDoc(slice []string) (newSlice []string) {
 	var sizeOfSlice uint64
@@ -174,6 +175,7 @@ func TruncateStringSliceForMongoDoc(slice []string) (newSlice []string) {
 
 // TruncateUUIDSliceForMongoDoc ensures a mongouuid.UUID slice will fit in the mongodb doc size limit and truncates the
 // slice if necessary logging a warning.
+//
 //goland:noinspection GoUnusedExportedFunction
 func TruncateUUIDSliceForMongoDoc(slice []mongouuid.UUID) (newSlice []mongouuid.UUID) {
 	sizeOfUUID := uint64(binary.Size(mongouuid.UUID{}))
