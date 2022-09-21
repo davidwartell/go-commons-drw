@@ -313,3 +313,22 @@ if success := runLock.Lock(ctx); !success {
 // do something here you need a lock for
 defer runLock.Unlock()
 ```
+
+### watchdog 
+Watchdog will call the cancel function associated with the returned context when a max run time has been exceeded.  
+Pass the context returned to a long-running tasks that can be interrupted by a cancelled context.
+
+```
+// create a new watchdog
+watchDog, watchDogCtx := watchdog.NewWatchDog(
+    ctx,
+    time.Duration(300) * time.Second,
+)
+defer watchDog.Cancel()
+
+// SomeLongRunningFunction that we want to run no more than 300 seconds.  Function should exit if watchDogCtx is cancelled.
+// Use context aware network/database connections in this function.  If you have long running computations in a loop
+// periodically check if watchDogCtx.Err() != nil in SomeLongRunningFunction.
+SomeLongRunningFunction(watchDogCtx)
+```
+
