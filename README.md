@@ -111,9 +111,6 @@ func pingConn(ctx context.Context, conn *grpc.ClientConn) (time.Duration, error)
 }
 ```
 
-### httpcommon
-Code for http clients and standing up http proxy servers in golang in front of your client to control aspects of the request.
-
 ### launchd
 MacOS Launch Daemon tooling.
 A facade and extra tooling around a fork of https://github.com/DHowett/go-plist that has changes I found necessary for control of MacOS Launch Daemon on customer computers.
