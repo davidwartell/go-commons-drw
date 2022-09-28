@@ -332,3 +332,17 @@ defer watchDog.Cancel()
 SomeLongRunningFunction(watchDogCtx)
 ```
 
+## Contributing
+
+Happy to accept PRs.
+
+# Author
+
+**davidwartell**
+
+* <http://github.com/davidwartell>
+* <http://linkedin.com/in/wartell>
+
+## License
+
+Released under the [Apache License](https://github.com/davidwartell/go-commons-drw/blob/master/LICENSE).
