@@ -129,6 +129,7 @@ func NewElectorOptions() ElectorOptions {
 // followerWorker - followerWorker.Start() is called when this instance loses an election.  followerWorker.Close() is called when this instance wins an election
 // thisInstanceLeaderHostname - a hostname that will be passed to followers they can use to connect to a service on the leader, can be empty
 // thisInstanceLeaderPort - a port that will be passed to followers they can use to connect to a service on the leader, can be empty
+//
 //goland:noinspection GoUnusedExportedFunction
 func NewElector(
 	ctx context.Context,
@@ -306,7 +307,7 @@ func doExpireWork(ctx context.Context, config electorConfig) (latestLeader *Elec
 	var collection *mongo.Collection
 	collection, err = mongostore.Instance().CollectionLinearWriteRead(ctx, collectionName)
 	if err != nil {
-		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error"), logger.Error(err))
+		logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error"), logger.Error(err))
 		return
 	}
 
@@ -317,7 +318,7 @@ func doExpireWork(ctx context.Context, config electorConfig) (latestLeader *Elec
 	_, err = collection.DeleteOne(dbCtx, filter)
 	cancel()
 	if err != nil {
-		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on DeleteOne for expireWorker"), logger.Error(err))
+		logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error on DeleteOne for expireWorker"), logger.Error(err))
 		return
 	}
 
@@ -329,7 +330,7 @@ func doExpireWork(ctx context.Context, config electorConfig) (latestLeader *Elec
 	cancel()
 	if err != nil {
 		if err != mongo.ErrNoDocuments {
-			logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on FindOne for expireWorker"), logger.Error(err))
+			logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error on FindOne for expireWorker"), logger.Error(err))
 		}
 	} else {
 		latestLeader = newLeader
@@ -373,7 +374,7 @@ func expireWorker(ctx context.Context, wg *sync.WaitGroup, config electorConfig,
 		if !indexEnsured {
 			ok := database.AddAndEnsureManagedIndexes(ctx, strings.ToLower(collectionName), ManagedIndexes)
 			if !ok {
-				logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error ensuring indexes"), logger.Stack("stacktrace"))
+				logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error ensuring indexes"), logger.Stack("stacktrace"))
 				continue
 			} else {
 				indexEnsured = true
@@ -401,11 +402,12 @@ func followerLeaderWatch(ctx context.Context, leaderExpiredChan <-chan struct{})
 // elect
 // Runs until the context cancelled. Stops leaderWorker and followerWorker then attempts to elect itself leader.
 // If election won:
-//		1) start the leaderWorker
-//		2) update ElectedLeader.TTLExpire record in mongo every e.leaderHeartbeatSeconds, and if fail run election
+//  1. start the leaderWorker
+//  2. update ElectedLeader.TTLExpire record in mongo every e.leaderHeartbeatSeconds, and if fail run election
+//
 // If election lost:
-//		1) start followerWorker
-//		2) watch for deletes to the collection and if the leader for our e.boundary is deleted run election
+//  1. start followerWorker
+//  2. watch for deletes to the collection and if the leader for our e.boundary is deleted run election
 func elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, leaderExpiredChan <-chan struct{}, newLeaderChan chan<- *ElectedLeader) {
 	defer wg.Done()
 	defer func() {
