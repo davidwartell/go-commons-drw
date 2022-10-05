@@ -34,9 +34,10 @@ type BufferedSetObserver struct {
 	bufferDuration time.Duration
 	events         chan<- string
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
+	ctxDone <-chan struct{}
+	wg      sync.WaitGroup
 
 	listenersLock sync.Mutex // protects listeners
 	listeners     []Listener
@@ -58,6 +59,7 @@ func NewBufferedSetObserver(bufferDuration time.Duration) *BufferedSetObserver {
 		bufferReceived: 0,
 	}
 	obs.ctx, obs.cancel = context.WithCancel(context.Background())
+	obs.ctxDone = obs.ctx.Done()
 	obs.eventLoop(eventsChan)
 	return obs
 }
@@ -174,7 +176,7 @@ func (o *BufferedSetObserver) handleEvent(event string) {
 					o.bufferEventsLock.Unlock()
 					return
 
-				case <-o.ctx.Done():
+				case <-o.ctxDone:
 					return
 				}
 			}
@@ -193,7 +195,7 @@ func (o *BufferedSetObserver) eventLoop(eventsChan <-chan string) {
 			case event := <-eventsChan:
 				o.handleEvent(event)
 
-			case <-o.ctx.Done():
+			case <-o.ctxDone:
 				break readChannelsLoop
 			}
 		}
