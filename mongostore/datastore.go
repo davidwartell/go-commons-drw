@@ -872,13 +872,23 @@ CollectionLoop:
 				)
 				_, err = collection.Indexes().DropOne(ctx, nameStr)
 				if err != nil {
-					task.LogErrorStruct(
-						taskName,
-						"error dropping index",
-						logger.String("collectionName", collectionName),
-						logger.String("indexName", nameStr),
-						logger.Error(err),
-					)
+					if !IsIndexNotFoundError(err) {
+						task.LogErrorStruct(
+							taskName,
+							"error dropping index",
+							logger.String("collectionName", collectionName),
+							logger.String("indexName", nameStr),
+							logger.Error(err),
+						)
+					} else {
+						task.LogInfoStruct(
+							taskName,
+							"finished drop index - already dropped",
+							logger.String("collectionName", collectionName),
+							logger.String("indexName", nameStr),
+							logger.Duration("time", time.Since(startTime)),
+						)
+					}
 				} else {
 					task.LogInfoStruct(
 						taskName,
@@ -1331,6 +1341,19 @@ func WithMaxPoolSize(maxPoolSize uint64) DataStoreOption {
 func WithConnectTimeoutSeconds(connectTimeoutSeconds uint64) DataStoreOption {
 	return func(o *Options) {
 		o.connectTimeoutSeconds = connectTimeoutSeconds
+	}
+}
+
+func IsIndexNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	} else if commandErr, ok := err.(mongo.CommandError); ok {
+		if commandErr.Code != 27 { // Mongo Error Code 27 IndexNotFound
+			return false
+		}
+		return true
+	} else {
+		return false
 	}
 }
 
