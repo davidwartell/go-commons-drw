@@ -20,7 +20,6 @@ package mongostore
 //goland:noinspection SpellCheckingInspection
 import (
 	"context"
-	"encoding/binary"
 	"github.com/davidwartell/go-commons-drw/logger"
 	"github.com/davidwartell/go-commons-drw/mongouuid"
 	"github.com/davidwartell/go-commons-drw/task"
@@ -38,7 +37,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 )
 
 const indexNameDelim = "_"
@@ -84,7 +82,6 @@ const (
 	DefaultMaxPoolSize                          = uint64(100)
 	DefaultHost                                 = "localhost:27017"
 	taskName                                    = "Mongo DataStore"
-	MaxSliceSizePerMongoDocument                = uint64(10 * 1024 * 1024)
 )
 
 type Options struct {
@@ -150,54 +147,6 @@ func Instance() *DataStore {
 
 var stringSliceType = reflect.TypeOf([]string{})
 var mongouuidSliceType = reflect.TypeOf([]mongouuid.UUID{})
-
-// TruncateStringSliceForMongoDoc ensures a string slice will fit in the mongodb doc size limit and truncates the slice
-// if necessary logging a warning.
-//
-//goland:noinspection GoUnusedExportedFunction
-func TruncateStringSliceForMongoDoc(slice []string) (newSlice []string) {
-	var sizeOfSlice uint64
-	for index, str := range slice {
-		sizeOfSlice = sizeOfSlice + uint64(utf8.RuneCountInString(str))
-		if sizeOfSlice > MaxSliceSizePerMongoDocument {
-			logger.Instance().Warn(
-				"truncating slice to fit in mongo document",
-				logger.String("type", stringSliceType.String()),
-				logger.Int("initialSliceLength", len(slice)),
-				logger.Int("truncatedSliceLength", index),
-				logger.Uint64("maxLengthBytes", MaxSliceSizePerMongoDocument),
-			)
-			newSlice = slice[:index]
-			return
-		}
-	}
-	newSlice = slice
-	return
-}
-
-// TruncateUUIDSliceForMongoDoc ensures a mongouuid.UUID slice will fit in the mongodb doc size limit and truncates the
-// slice if necessary logging a warning.
-//
-//goland:noinspection GoUnusedExportedFunction
-func TruncateUUIDSliceForMongoDoc(slice []mongouuid.UUID) (newSlice []mongouuid.UUID) {
-	sizeOfUUID := uint64(binary.Size(mongouuid.UUID{}))
-	lenOfSlice := uint64(len(slice))
-	sizeOfSlice := lenOfSlice * sizeOfUUID
-	if sizeOfSlice > MaxSliceSizePerMongoDocument {
-		allowedLength := MaxSliceSizePerMongoDocument / sizeOfUUID
-		newSlice = slice[:allowedLength]
-		logger.Instance().Warn(
-			"truncating slice to fit in mongo document",
-			logger.String("type", mongouuidSliceType.String()),
-			logger.Uint64("initialSliceLength", lenOfSlice),
-			logger.Uint64("truncatedSliceLength", allowedLength),
-			logger.Uint64("maxLengthBytes", MaxSliceSizePerMongoDocument),
-		)
-		return
-	}
-	newSlice = slice
-	return
-}
 
 // CheckForDirtyWriteOnUpsert is expected to be used like this:
 // Add a field to your struct called "DirtyWriteGuard"
