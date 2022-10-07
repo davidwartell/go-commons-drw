@@ -21,12 +21,16 @@ import (
 	"encoding/binary"
 	"github.com/davidwartell/go-commons-drw/logger"
 	"github.com/davidwartell/go-commons-drw/mongouuid"
+	"reflect"
 	"unicode/utf8"
 )
 
 const (
 	MaxSliceSizePerMongoDocument = uint64(10 * 1024 * 1024)
 )
+
+var stringSliceType = reflect.TypeOf([]string{})
+var mongouuidSliceType = reflect.TypeOf([]mongouuid.UUID{})
 
 // TruncateStringSliceForMongoDoc ensures a string slice will fit in the mongodb doc size limit and truncates the slice
 // if necessary logging a warning.
