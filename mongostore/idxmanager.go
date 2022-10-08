@@ -65,6 +65,9 @@ type indexGroup struct {
 // If it's unable to connect to mongo it will keep retrying using an exponential backoff with a default of
 // DefaultMaxFailedEnsureIndexesBackoffSeconds configurable with WithMaxFailedEnsureIndexesBackoffSeconds().
 func (a *DataStore) AddAndEnsureManagedIndexes(groupName string, addManagedIndexes []Index) {
+	if len(addManagedIndexes) == 0 {
+		return
+	}
 	a.addManagedIndexes(groupName, addManagedIndexes)
 	a.Lock()
 	defer a.Unlock()
