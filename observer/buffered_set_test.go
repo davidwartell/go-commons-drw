@@ -19,8 +19,9 @@ package observer
 
 import (
 	"context"
-	"go.uber.org/atomic"
+	"github.com/pkg/errors"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -78,21 +79,16 @@ func TestEmitParallel(t *testing.T) {
 	var o = NewBufferedSetObserver(0 * time.Second)
 	defer o.Close()
 
-	numRoutines := uint64(1000)
-	done := make(chan bool)
-	defer close(done)
+	countExpected := uint64(1000)
+	doneChan := make(chan interface{})
+	observer := &testObserver{
+		countExpected: countExpected,
+		doneChan:      doneChan,
+	}
 
-	receivedCount := atomic.NewUint64(0)
-	o.AddListener(func(ctx context.Context, e []string) {
-		for range e {
-			receivedCount.Add(1)
-			if receivedCount.Load() == numRoutines {
-				done <- true
-			}
-		}
-	})
+	o.AddListener(observer.Observe)
 
-	for i := uint64(0); i < numRoutines; i++ {
+	for i := uint64(0); i < countExpected; i++ {
 		num := i
 		go func() {
 			o.Emit("done " + strconv.FormatUint(num, 10))
@@ -100,7 +96,7 @@ func TestEmitParallel(t *testing.T) {
 	}
 
 	// blocks until listener is triggered numRoutines times
-	<-done
+	<-doneChan
 }
 
 func TestEmitParallelBuffered(t *testing.T) {
@@ -108,22 +104,17 @@ func TestEmitParallelBuffered(t *testing.T) {
 	var o = NewBufferedSetObserver(time.Duration(bufferDuration) * time.Second)
 	defer o.Close()
 
-	numRoutines := uint64(1000)
-	done := make(chan bool)
-	defer close(done)
+	countExpected := uint64(1000)
+	doneChan := make(chan interface{})
+	observer := &testObserver{
+		countExpected: countExpected,
+		doneChan:      doneChan,
+	}
 
-	receivedCount := atomic.NewUint64(0)
-	o.AddListener(func(ctx context.Context, e []string) {
-		for range e {
-			receivedCount.Add(1)
-			if receivedCount.Load() == numRoutines {
-				done <- true
-			}
-		}
-	})
+	o.AddListener(observer.Observe)
 
-	sleepMs := ((bufferDuration * uint64(2)) * uint64(1000)) / numRoutines
-	for i := uint64(0); i < numRoutines; i++ {
+	sleepMs := ((bufferDuration * uint64(2)) * uint64(1000)) / countExpected
+	for i := uint64(0); i < countExpected; i++ {
 		num := i
 		go func() {
 			o.Emit("done " + strconv.FormatUint(num, 10))
@@ -132,7 +123,7 @@ func TestEmitParallelBuffered(t *testing.T) {
 	}
 
 	// blocks until listener is triggered numRoutines times
-	<-done
+	<-doneChan
 }
 
 func TestBufferedEvents(t *testing.T) {
@@ -166,5 +157,31 @@ func TestBufferedEvents(t *testing.T) {
 
 	if len(output) != 1 {
 		t.Error("error sending 4 buffered identical events.")
+	}
+}
+
+type testObserver struct {
+	mutex         sync.Mutex
+	count         uint64
+	countExpected uint64
+	doneChan      chan<- interface{}
+	chanClosed    bool
+	err           error
+}
+
+func (o *testObserver) Observe(_ context.Context, e []string) {
+	o.mutex.Lock()
+	defer o.mutex.Unlock()
+	for range e {
+		o.count++
+		if o.chanClosed {
+			o.err = errors.Errorf("received message after count reached expected(%d) received(%d)", o.countExpected, o.count)
+			continue
+		}
+		if o.count == o.countExpected {
+			o.doneChan <- struct{}{}
+			close(o.doneChan)
+			o.chanClosed = true
+		}
 	}
 }
