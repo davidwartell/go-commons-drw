@@ -68,7 +68,6 @@ type Options struct {
 
 type DataStore struct {
 	sync.RWMutex
-	task.BaseTask
 	started                           bool
 	options                           *Options
 	mongoClientForWatch               *mongo.Client
@@ -89,6 +88,13 @@ var once sync.Once
 
 type DataStoreOption func(o *Options)
 
+// Instance returns an instance of the data store singleton. This ensures you only have once instance of this per program.
+// All connections will be polled automatically and you have no work for startup or cleaning up connections than
+// running Instance().StartTask() and Instance().StopTask().
+//
+// The singleton is multithreading safe.  Reference anywhere you need a connection to mongo or want to add Indexes after startup: e.g.
+// mongostore.Instance().CollectionLinearWriteRead(...)
+// mongostore.Instance().AddAndEnsureManagedIndexes(...)
 func Instance() *DataStore {
 	once.Do(func() {
 		instance = &DataStore{
@@ -112,6 +118,9 @@ func Instance() *DataStore {
 	return instance
 }
 
+// StartTask starts the background routines.  Call this once on startup from your main.go.
+// Call StopTask() on exit.
+// Indexes supplied here will be managed in a separate go routine after startup.
 func (a *DataStore) StartTask(managedIndexes []Index, opts ...DataStoreOption) {
 	a.Lock()
 	defer a.Unlock()
@@ -125,18 +134,20 @@ func (a *DataStore) StartTask(managedIndexes []Index, opts ...DataStoreOption) {
 		opt(a.options)
 	}
 
-	a.addManagedIndexes(startupIndexGroupName, managedIndexes)
-
 	a.wg.Add(1)
 	go a.runPing(a.ctx, &a.wg)
 
-	a.wg.Add(1)
-	go a.runEnsureStartupIndexes(a.ctx, &a.wg)
+	if len(managedIndexes) > 0 {
+		a.addManagedIndexes(startupIndexGroupName, managedIndexes)
+		a.wg.Add(1)
+		go a.runEnsureIndexes(a.ctx, &a.wg, startupIndexGroupName)
+	}
 
 	a.started = true
 	task.LogInfoStruct(taskName, "started")
 }
 
+// StopTask disconnects the mongo clients and stops the background routines.  Call this once on exit of your main.go.
 func (a *DataStore) StopTask() {
 	a.Lock()
 	if !a.started {
@@ -735,10 +746,7 @@ func IsIndexNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	} else if commandErr, ok := err.(mongo.CommandError); ok {
-		if commandErr.Code != 27 { // Mongo Error Code 27 IndexNotFound
-			return false
-		}
-		return true
+		return commandErr.Code == 27 // Mongo Error Code 27 IndexNotFound
 	} else {
 		return false
 	}

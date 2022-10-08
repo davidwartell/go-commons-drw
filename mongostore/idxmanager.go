@@ -59,14 +59,17 @@ type indexGroup struct {
 
 // AddAndEnsureManagedIndexes adds additional indexes to be managed after startup. groupName must be unique and each
 // group must operate on a different set of Collections than another group.  If groupName is already registered
-// then this function does nothing and returns. If tthis group has Collections overlapping with another managed group
+// then this function does nothing and returns. If this group has Collections overlapping with another managed group
 // then panics.
-func (a *DataStore) AddAndEnsureManagedIndexes(ctx context.Context, groupName string, addManagedIndexes []Index) (ok bool) {
-	addOk := a.addManagedIndexes(groupName, addManagedIndexes)
-	if !addOk {
-		return true
-	}
-	return a.ensureIndexes(ctx, groupName)
+// AddAndEnsureManagedIndexes will do the work in a new go routine.  If there are problems you will need to watch log messages.
+// If it's unable to connect to mongo it will keep retrying using an exponential backoff with a default of
+// DefaultMaxFailedEnsureIndexesBackoffSeconds configurable with WithMaxFailedEnsureIndexesBackoffSeconds().
+func (a *DataStore) AddAndEnsureManagedIndexes(groupName string, addManagedIndexes []Index) {
+	a.addManagedIndexes(groupName, addManagedIndexes)
+	a.Lock()
+	defer a.Unlock()
+	a.wg.Add(1)
+	go a.runEnsureIndexes(a.ctx, &a.wg, groupName)
 }
 
 func (a *DataStore) Index(collectionName string, indexId IndexIdentifier) (idx Index, err error) {
@@ -103,7 +106,8 @@ func managedIndexId(collectionName string, indexId IndexIdentifier) string {
 	return sb.String()
 }
 
-func (a *DataStore) addManagedIndexes(groupName string, addManagedIndexes []Index) (ok bool) {
+func (a *DataStore) addManagedIndexes(groupName string, addManagedIndexes []Index) {
+	logger.Instance().Info("adding managed index group", logger.String("groupName", groupName))
 	a.managedIndexesLock.Lock()
 	defer a.managedIndexesLock.Unlock()
 
@@ -162,7 +166,6 @@ func (a *DataStore) addManagedIndexes(groupName string, addManagedIndexes []Inde
 	for _, idx := range addManagedIndexes {
 		a.allIndexesByPath[managedIndexId(idx.CollectionName, idx.Id)] = idx
 	}
-	return true
 }
 
 // Only return error if connect error.
@@ -375,9 +378,9 @@ CollectionLoop:
 	return true
 }
 
-func (a *DataStore) runEnsureStartupIndexes(ctx context.Context, wg *sync.WaitGroup) {
+func (a *DataStore) runEnsureIndexes(ctx context.Context, wg *sync.WaitGroup, indexGroupName string) {
 	defer wg.Done()
-	task.LogInfoStruct(taskName, "ensuring indexes")
+	task.LogInfoStruct(taskName, "ensuring indexes", logger.String("indexGroupName", indexGroupName))
 
 	a.RLock()
 	maxBackoffSeconds := a.options.maxFailedEnsureIndexesBackoffSeconds
@@ -390,7 +393,7 @@ func (a *DataStore) runEnsureStartupIndexes(ctx context.Context, wg *sync.WaitGr
 		Jitter: true,
 	}
 	for {
-		okOrNoRetry := a.ensureIndexes(ctx, startupIndexGroupName)
+		okOrNoRetry := a.ensureIndexes(ctx, indexGroupName)
 		if !okOrNoRetry {
 			task.LogErrorStruct(taskName, "error ensuring indexes (will retry)")
 		} else {
@@ -399,7 +402,7 @@ func (a *DataStore) runEnsureStartupIndexes(ctx context.Context, wg *sync.WaitGr
 		select {
 		case <-time.After(failedConnectBackoff.Duration()):
 		case <-ctx.Done():
-			task.LogInfoStruct(taskName, "ensure index runner stopped before complete")
+			task.LogInfoStruct(taskName, "ensure index runner stopped before complete (context cancelled)")
 			return
 		}
 	}

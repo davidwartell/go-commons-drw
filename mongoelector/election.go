@@ -363,7 +363,7 @@ func expireWorker(ctx context.Context, wg *sync.WaitGroup, config electorConfig,
 		}
 	}()
 
-	indexEnsured := false
+	var indexEnsured bool
 	for {
 		select {
 		case <-time.After(time.Second * time.Duration(config.options.LeaderHeartbeatSeconds)):
@@ -372,13 +372,8 @@ func expireWorker(ctx context.Context, wg *sync.WaitGroup, config electorConfig,
 		}
 
 		if !indexEnsured {
-			ok := database.AddAndEnsureManagedIndexes(ctx, strings.ToLower(collectionName), ManagedIndexes)
-			if !ok {
-				logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error ensuring indexes"), logger.Stack("stacktrace"))
-				continue
-			} else {
-				indexEnsured = true
-			}
+			database.AddAndEnsureManagedIndexes(strings.ToLower(collectionName), ManagedIndexes)
+			indexEnsured = true
 		}
 
 		latestLeader := doExpireWork(ctx, config)
