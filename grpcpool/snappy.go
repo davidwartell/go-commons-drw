@@ -18,7 +18,7 @@
 package grpcpool
 
 import (
-	"github.com/klauspost/compress/s2"
+	"github.com/golang/snappy"
 	"io"
 	"sync"
 
@@ -48,7 +48,8 @@ func RegisterSnappyCompressor() {
 func (c *snappyCompressor) Compress(w io.Writer) (io.WriteCloser, error) {
 	wr, inPool := writerPool.Get().(*snappyWriteCloser)
 	if !inPool {
-		return &snappyWriteCloser{Writer: s2.NewWriter(w, s2.WriterSnappyCompat())}, nil
+		//return &snappyWriteCloser{Writer: s2.NewWriter(w, s2.WriterSnappyCompat())}, nil
+		return &snappyWriteCloser{Writer: snappy.NewBufferedWriter(w)}, nil
 	}
 	wr.Reset(w)
 
@@ -58,7 +59,8 @@ func (c *snappyCompressor) Compress(w io.Writer) (io.WriteCloser, error) {
 func (c *snappyCompressor) Decompress(r io.Reader) (io.Reader, error) {
 	dr, inPool := readerPool.Get().(*snappyReader)
 	if !inPool {
-		return &snappyReader{Reader: s2.NewReader(r)}, nil
+		//return &snappyReader{Reader: s2.NewReader(r)}, nil
+		return &snappyReader{Reader: snappy.NewReader(r)}, nil
 	}
 	dr.Reset(r)
 
@@ -70,7 +72,8 @@ func (c *snappyCompressor) Name() string {
 }
 
 type snappyWriteCloser struct {
-	*s2.Writer
+	//*s2.Writer
+	*snappy.Writer
 }
 
 func (w *snappyWriteCloser) Close() error {
@@ -82,7 +85,8 @@ func (w *snappyWriteCloser) Close() error {
 }
 
 type snappyReader struct {
-	*s2.Reader
+	//*s2.Reader
+	*snappy.Reader
 }
 
 func (r *snappyReader) Read(p []byte) (n int, err error) {

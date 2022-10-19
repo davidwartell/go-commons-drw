@@ -3,9 +3,9 @@ module github.com/davidwartell/go-commons-drw
 go 1.19
 
 require (
+	github.com/golang/snappy v0.0.4
 	github.com/google/go-cmp v0.5.8
 	github.com/jpillora/backoff v1.0.0
-	github.com/klauspost/compress v1.15.11
 	github.com/mattn/go-colorable v0.1.13
 	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/pkg/errors v0.9.1
@@ -25,7 +25,7 @@ require (
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
-	github.com/golang/snappy v0.0.4 // indirect
+	github.com/klauspost/compress v1.13.6 // indirect
 	github.com/mattn/go-isatty v0.0.16 // indirect
 	github.com/montanaflynn/stats v0.0.0-20171201202039-1bf9dbcd8cbe // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
