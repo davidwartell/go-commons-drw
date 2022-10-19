@@ -89,6 +89,14 @@ type LoggingOption func(o *Options)
 
 type Options struct {
 	productNameShort string
+	samplingEnabled  bool
+	samplingOptions  SamplingOptions
+}
+
+type SamplingOptions struct {
+	Tick       time.Duration
+	First      int
+	Thereafter int
 }
 
 var instance *Singleton
@@ -101,6 +109,14 @@ var once sync.Once
 func WithProductNameShort(productNameShort string) LoggingOption {
 	return func(o *Options) {
 		o.productNameShort = productNameShort
+	}
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func WithSampling(samplingOptions SamplingOptions) LoggingOption {
+	return func(o *Options) {
+		o.samplingOptions = samplingOptions
+		o.samplingEnabled = true
 	}
 }
 
@@ -175,7 +191,10 @@ func (s *Singleton) StartTask(opts ...LoggingOption) {
 		lumberjackSink,
 		instance.loggers[fileKey].level,
 	)
-	fileLoggerCore = zapcore.NewSamplerWithOptions(fileLoggerCore, time.Second, 10, 5)
+
+	if s.options.samplingEnabled {
+		fileLoggerCore = zapcore.NewSamplerWithOptions(fileLoggerCore, s.options.samplingOptions.Tick, s.options.samplingOptions.First, s.options.samplingOptions.Thereafter)
+	}
 	instance.loggers[fileKey].logger = zap.New(fileLoggerCore, zap.AddStacktrace(zap.ErrorLevel), zap.AddCaller(), zap.AddCallerSkip(1))
 
 	s.started = true
@@ -216,7 +235,7 @@ func Instance() *Singleton {
 	return instance
 }
 
-func (s *Singleton) AddLogger(key string, w io.Writer, newLevel Level) {
+func (s *Singleton) AddLogger(key string, w io.Writer, newLevel Level, opts ...LoggingOption) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -224,6 +243,12 @@ func (s *Singleton) AddLogger(key string, w io.Writer, newLevel Level) {
 	_, exists := instance.loggers[key]
 	if exists {
 		return
+	}
+
+	// apply options
+	var addLoggerOpts Options
+	for _, opt := range opts {
+		opt(&addLoggerOpts)
 	}
 
 	instance.loggers[key] = &LogInstance{
@@ -241,7 +266,10 @@ func (s *Singleton) AddLogger(key string, w io.Writer, newLevel Level) {
 		zapcore.AddSync(w),
 		instance.loggers[key].level,
 	)
-	newloggerCore = zapcore.NewSamplerWithOptions(newloggerCore, time.Second, 10, 5)
+	if addLoggerOpts.samplingEnabled {
+		newloggerCore = zapcore.NewSamplerWithOptions(newloggerCore, s.options.samplingOptions.Tick, s.options.samplingOptions.First, s.options.samplingOptions.Thereafter)
+	}
+
 	instance.loggers[key].logger = zap.New(newloggerCore, zap.AddStacktrace(zap.ErrorLevel), zap.AddCaller(), zap.AddCallerSkip(1))
 }
 
