@@ -133,7 +133,10 @@ func (p *Pool) Get(ctx context.Context) (grpcpool.PoolClientConn, error) {
 	if p.conn == nil {
 		var err error
 		p.conn, err = p.factory.NewConnection(ctx)
-		if err != nil {
+		if ctx.Err() != nil {
+			p.conn = nil
+			return nil, ctx.Err()
+		} else if err != nil {
 			p.conn = nil
 			return nil, err
 		}
@@ -141,7 +144,10 @@ func (p *Pool) Get(ctx context.Context) (grpcpool.PoolClientConn, error) {
 	} else {
 		// test an existing connection
 		err := p.factory.ConnectionOk(ctx, p.conn)
-		if err != nil {
+		if ctx.Err() != nil {
+			// dont try reconnect if context is cancelled
+			return nil, ctx.Err()
+		} else if err != nil {
 			logger.Instance().Info("existing connection returned error on closing", logger.Error(err))
 			_ = p.conn.Close()
 			p.conn = nil
@@ -149,14 +155,20 @@ func (p *Pool) Get(ctx context.Context) (grpcpool.PoolClientConn, error) {
 			logger.Instance().Info("trying to reconnect")
 			var err2 error
 			p.conn, err2 = p.factory.NewConnection(ctx)
-			if err2 != nil {
+			if ctx.Err() != nil {
+				// dont go further if context is cancelled
+				return nil, ctx.Err()
+			} else if err2 != nil {
 				p.conn = nil
 				logger.Instance().Info("reconnect failed", logger.Error(err2))
 				return nil, err
 			}
 
 			err3 := p.factory.ConnectionOk(ctx, p.conn)
-			if err3 != nil {
+			if ctx.Err() != nil {
+				// dont go further if context is cancelled
+				return nil, ctx.Err()
+			} else if err3 != nil {
 				logger.Instance().Info("reconnect not ok closing", logger.Error(err3))
 				_ = p.conn.Close()
 				p.conn = nil
