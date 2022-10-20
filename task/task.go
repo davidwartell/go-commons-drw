@@ -32,6 +32,7 @@ type Task interface {
 type BaseTask struct{}
 
 // LogTraceStruct deprecated
+//
 //goland:noinspection GoUnusedExportedFunction
 func LogTraceStruct(taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
@@ -39,6 +40,7 @@ func LogTraceStruct(taskName string, msg string, fields ...logger.Field) {
 }
 
 // LogDebugStruct deprecated
+//
 //goland:noinspection GoUnusedExportedFunction
 func LogDebugStruct(taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
@@ -46,6 +48,7 @@ func LogDebugStruct(taskName string, msg string, fields ...logger.Field) {
 }
 
 // LogInfoStruct deprecated
+//
 //goland:noinspection GoUnusedExportedFunction
 func LogInfoStruct(taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
@@ -53,6 +56,7 @@ func LogInfoStruct(taskName string, msg string, fields ...logger.Field) {
 }
 
 // LogWarnStruct deprecated
+//
 //goland:noinspection GoUnusedExportedFunction
 func LogWarnStruct(taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
@@ -60,6 +64,7 @@ func LogWarnStruct(taskName string, msg string, fields ...logger.Field) {
 }
 
 // LogWarnStructIgnoreCancel deprecated
+//
 //goland:noinspection GoUnusedExportedFunction
 func LogWarnStructIgnoreCancel(ctx context.Context, taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
@@ -67,6 +72,7 @@ func LogWarnStructIgnoreCancel(ctx context.Context, taskName string, msg string,
 }
 
 // LogErrorStruct deprecated
+//
 //goland:noinspection GoUnusedExportedFunction
 func LogErrorStruct(taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
@@ -74,6 +80,7 @@ func LogErrorStruct(taskName string, msg string, fields ...logger.Field) {
 }
 
 // LogErrorStructIgnoreCancel deprecated
+//
 //goland:noinspection GoUnusedExportedFunction
 func LogErrorStructIgnoreCancel(ctx context.Context, taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
@@ -103,6 +110,12 @@ func LogDebug(taskName string, msg string, fields ...logger.Field) {
 func LogInfo(taskName string, msg string, fields ...logger.Field) {
 	fieldsWithService := append(fields, logger.String("task", taskName))
 	logger.Instance().Info(getTaskLogPrefix(taskName, msg), fieldsWithService...)
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func LogInfoIgnoreCancel(ctx context.Context, taskName string, msg string, fields ...logger.Field) {
+	fieldsWithService := append(fields, logger.String("task", taskName))
+	logger.Instance().InfoIgnoreCancel(ctx, getTaskLogPrefix(taskName, msg), fieldsWithService...)
 }
 
 //goland:noinspection GoUnusedExportedFunction
