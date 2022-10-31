@@ -55,8 +55,16 @@ func DecodeGrpcError(err error) (connectionFailure bool, returnErr error) {
 		}
 	} else if strings.Contains(err.Error(), "use of closed network connection") {
 		return true, err
+	} else if strings.Contains(err.Error(), "Error while dialing") {
+		return true, err
 	} else {
 		// general GRPC error
 		return true, err
 	}
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func GrpcErrIsConnFail(err error) (connectionFailure bool) {
+	connectionFailure, _ = DecodeGrpcError(err)
+	return
 }
