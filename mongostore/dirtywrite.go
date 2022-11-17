@@ -129,8 +129,8 @@ func CheckForDirtyWriteOnUpsert(updateResult *mongo.UpdateResult, inputErr error
 //
 //goland:noinspection GoUnusedExportedFunction
 func RetryDirtyWrite(dirtyWriteFunc DirtyWriteProtectedFunc) (err error) {
-	var retries uint64
-	maxRetries := uint64(100)
+	var retries int
+	maxRetries := 100
 	for {
 		err = dirtyWriteFunc()
 		if !errors.Is(err, DirtyWriteError) {
@@ -138,7 +138,7 @@ func RetryDirtyWrite(dirtyWriteFunc DirtyWriteProtectedFunc) (err error) {
 			break
 		}
 		retries++
-		if retries > maxRetries {
+		if retries >= maxRetries {
 			err = errors.Errorf("giving up retry after %d dirty writes", retries)
 			break
 		}
