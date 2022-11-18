@@ -132,7 +132,6 @@ func CheckForDirtyWriteOnUpsert(updateResult *mongo.UpdateResult, inputErr error
 //goland:noinspection GoUnusedExportedFunction
 func RetryDirtyWrite(dirtyWriteFunc RetryFunc) (err error) {
 	var retries int
-	maxRetries := numRetries
 	for {
 		err = dirtyWriteFunc()
 		if !errors.Is(err, DirtyWriteError) {
@@ -140,7 +139,7 @@ func RetryDirtyWrite(dirtyWriteFunc RetryFunc) (err error) {
 			break
 		}
 		retries++
-		if retries >= maxRetries {
+		if retries >= numRetries {
 			err = errors.Errorf("giving up retry after %d dirty writes", retries)
 			break
 		}
@@ -226,7 +225,6 @@ func DuplicateKeyFiltersFromBulkWriteError(err error) (containsDuplicateKeyError
 //goland:noinspection GoUnusedExportedFunction
 func RetryUpsertIfDuplicateKey(retryFunc RetryFunc) (err error) {
 	var retries int
-	maxRetries := numRetries
 	for {
 		err = retryFunc()
 		if !IsDuplicateKeyError(err) {
@@ -234,7 +232,7 @@ func RetryUpsertIfDuplicateKey(retryFunc RetryFunc) (err error) {
 			break
 		}
 		retries++
-		if retries >= maxRetries {
+		if retries >= numRetries {
 			err = errors.Errorf("giving up duplicate key on upsert retry after %d retries", retries)
 			break
 		}
