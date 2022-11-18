@@ -22,9 +22,11 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-type DirtyWriteProtectedFunc func() error
+type RetryFunc func() error
 
 var DirtyWriteError = errors.New("dirty write error")
+
+const numRetries = 25
 
 // CheckForDirtyWriteOnUpsert is expected to be used like this:
 // Add a field to your struct called "DirtyWriteGuard"
@@ -115,7 +117,7 @@ func CheckForDirtyWriteOnUpsert(updateResult *mongo.UpdateResult, inputErr error
 //			var existingPerson *Person
 //			existingPerson, retryErr = YourFunctionThatDoesMongoFind(ctx, personId)
 //
-//			// ...logic that makes changes existingPerson which could be now stale
+//			// ...logic that makes changes to existingPerson which could be now stale
 //
 //			// YourFunctionThatDoesMongoUpsert can return DirtyWriteError
 //			if retryErr = YourFunctionThatDoesMongoUpsert(ctx, existingPerson); retryErr != nil {
@@ -128,9 +130,9 @@ func CheckForDirtyWriteOnUpsert(updateResult *mongo.UpdateResult, inputErr error
 //		})
 //
 //goland:noinspection GoUnusedExportedFunction
-func RetryDirtyWrite(dirtyWriteFunc DirtyWriteProtectedFunc) (err error) {
+func RetryDirtyWrite(dirtyWriteFunc RetryFunc) (err error) {
 	var retries int
-	maxRetries := 100
+	maxRetries := numRetries
 	for {
 		err = dirtyWriteFunc()
 		if !errors.Is(err, DirtyWriteError) {
@@ -151,15 +153,6 @@ func RetryDirtyWrite(dirtyWriteFunc DirtyWriteProtectedFunc) (err error) {
 //
 // Will return false if there are multiple nested mongo writeExceptions and one of the errors has a Code != 11000
 // (duplicate key) indicating there are other errors that should be handled and not ignored or handled the same.
-//
-// BE WARNED: Mongo can at any time return E11000 duplicate key error for ANY command with Upsert enabled. Mongo expects
-// the application to handle this error. This happens if: "During an update with upsert:true option, two (or more)
-// threads may attempt an upsert operation using the same query predicate and, upon not finding a match, the threads
-// will attempt to insert a new document. Both inserts will (and should) succeed, unless the second causes a unique
-// constraint violation." See: https://jira.mongodb.org/browse/SERVER-14322
-//
-// Note: its documented that mongo retries  under the usual cases. While that may be true im seeing it still returns an
-// error.
 //
 //goland:noinspection GoUnusedExportedFunction
 func IsDuplicateKeyError(err error) bool {
@@ -182,4 +175,69 @@ func IsDuplicateKeyError(err error) bool {
 	} else {
 		return false
 	}
+}
+
+// DuplicateKeyFiltersFromBulkWriteError returns true if there are any E11000 duplicate key errors.
+// Returns a slice of whatever you passed into the mongo command for your Filter or Filters if BulkWrite(). Should be a
+// primitive.M or primitive.D.
+//
+//goland:noinspection SpellCheckingInspection,GoUnusedExportedFunction
+func DuplicateKeyFiltersFromBulkWriteError(err error) (containsDuplicateKeyError bool, filtersForDups []interface{}) {
+	if err == nil {
+		return
+	} else if bulkWriteErr, ok := err.(mongo.BulkWriteException); ok && bulkWriteErr.WriteConcernError == nil {
+		for i := range bulkWriteErr.WriteErrors {
+			if bulkWriteErr.WriteErrors[i].Code == 11000 {
+				containsDuplicateKeyError = true
+				if replaceOneModel, isReplaceOne := bulkWriteErr.WriteErrors[i].Request.(*mongo.ReplaceOneModel); isReplaceOne {
+					filtersForDups = append(filtersForDups, replaceOneModel.Filter)
+				} else if updateOneModel, isUpdateOne := bulkWriteErr.WriteErrors[i].Request.(*mongo.UpdateOneModel); isUpdateOne {
+					filtersForDups = append(filtersForDups, updateOneModel.Filter)
+				} else if updateManyModel, isUpdateMany := bulkWriteErr.WriteErrors[i].Request.(*mongo.UpdateManyModel); isUpdateMany {
+					filtersForDups = append(filtersForDups, updateManyModel.Filter)
+				}
+			}
+		}
+	}
+	return
+}
+
+// RetryUpsertIfDuplicateKey can help handle expected behavior for any mongo command that uses Upsert. The retryFunc
+// will be tried up to numRetries times before giving up.
+//
+// BE WARNED: Mongo can at any time return E11000 duplicate key error for ANY command with Upsert enabled. Mongo expects
+// the application to handle this error. This happens if: "During an update with upsert:true option, two (or more)
+// threads may attempt an upsert operation using the same query predicate and, upon not finding a match, the threads
+// will attempt to insert a new document. Both inserts will (and should) succeed, unless the second causes a unique
+// constraint violation." See: https://jira.mongodb.org/browse/SERVER-14322
+//
+// Note: its documented that mongo retries on its own under the usual cases. While that may be true im seeing an
+// error being returned in the wild as of mongo 6.x.
+//
+//	 	Example:
+//		opt := &options.ReplaceOptions{}
+//		opt.SetUpsert(true)
+//	 	// This code will be run repeatedly until there is no DuplicateKeyError or the max retries is exceeded.
+//		err = mongostore.RetryUpsertIfDuplicateKey(func() error {
+//			_, retryErr := yourCollection.ReplaceOne(ctx, yourFilter, yourDocument, opt)
+//			return retryErr
+//		})
+//
+//goland:noinspection GoUnusedExportedFunction
+func RetryUpsertIfDuplicateKey(retryFunc RetryFunc) (err error) {
+	var retries int
+	maxRetries := numRetries
+	for {
+		err = retryFunc()
+		if !IsDuplicateKeyError(err) {
+			// if error is not a DuplicateKeyError give up retry err is nil or some other error exists that should be handled
+			break
+		}
+		retries++
+		if retries >= maxRetries {
+			err = errors.Errorf("giving up duplicate key on upsert retry after %d retries", retries)
+			break
+		}
+	}
+	return
 }
