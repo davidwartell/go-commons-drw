@@ -39,7 +39,7 @@ var ErrorServiceNotStarted = errors.New("getting mongo client failed: service is
 const (
 	DefaultDatabaseName                         = "datastore"
 	DefaultConnectTimeoutSeconds                = uint64(10)
-	DefaultTimeoutSecondsShutdown               = uint64(30)
+	DefaultTimeoutSecondsShutdown               = uint64(10)
 	DefaultTimeoutSecondsQuery                  = uint64(10)
 	DefaultPingHeartbeatSeconds                 = uint64(10)
 	DefaultMaxFailedEnsureIndexesBackoffSeconds = uint64(300)
