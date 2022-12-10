@@ -37,8 +37,9 @@ import (
 )
 
 const (
-	consoleKey = "console"
-	fileKey    = "file"
+	debugConsoleKey = "debug-console"
+	fileKey         = "file"
+	jsonStdoutKey   = "json-stdout"
 )
 
 // A Level is a logging priority. Higher levels are more important.
@@ -135,29 +136,51 @@ func (s *Singleton) StartTask(opts ...LoggingOption) {
 	}
 
 	//
-	// console logger
+	// debug console logger
 	//
-	s.loggers[consoleKey] = &LogInstance{
+	s.loggers[debugConsoleKey] = &LogInstance{
 		enabled: atomic.NewBool(false),
 	}
-	s.loggers[consoleKey].level = zap.NewAtomicLevelAt(zapcore.Level(InfoLevel))
+	s.loggers[debugConsoleKey].level = zap.NewAtomicLevelAt(zapcore.Level(InfoLevel))
 
 	consoleEncoderConfig := zap.NewDevelopmentEncoderConfig()
 	//consoleEncoderConfig.FunctionKey = "function"		// uncomment this to enable calling function like: github.com/foo/bar/foo/slogger.(*Singleton).ErrorUnstruct
 	consoleEncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	consoleEncoderConfig.EncodeTime = zapcore.TimeEncoderOfLayout("2006-01-02 15:04:05.000000000 UTCZ07:00")
 
-	s.loggers[consoleKey].logger = zap.New(
+	s.loggers[debugConsoleKey].logger = zap.New(
 		zapcore.NewCore(
 			zapcore.NewConsoleEncoder(consoleEncoderConfig),
 			zapcore.AddSync(colorable.NewColorableStdout()),
-			s.loggers[consoleKey].level,
+			s.loggers[debugConsoleKey].level,
 		),
 		zap.AddCallerSkip(1),
 		zap.Development(),
 		zap.AddCaller(),
 		zap.AddStacktrace(zapcore.WarnLevel),
 	)
+
+	//
+	// json stdout logger
+	//
+	s.loggers[jsonStdoutKey] = &LogInstance{
+		enabled: atomic.NewBool(false),
+	}
+	s.loggers[jsonStdoutKey].level = zap.NewAtomicLevelAt(zapcore.Level(InfoLevel))
+
+	jsonStdoutEncoderConfig := zap.NewProductionEncoderConfig()
+	jsonStdoutEncoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+		enc.AppendString(t.UTC().Format(time.RFC3339Nano))
+	}
+	jsonStdoutLoggerCore := zapcore.NewCore(
+		zapcore.NewJSONEncoder(jsonStdoutEncoderConfig),
+		zapcore.AddSync(os.Stdout),
+		s.loggers[jsonStdoutKey].level,
+	)
+	if s.options.samplingEnabled {
+		jsonStdoutLoggerCore = zapcore.NewSamplerWithOptions(jsonStdoutLoggerCore, s.options.samplingOptions.Tick, s.options.samplingOptions.First, s.options.samplingOptions.Thereafter)
+	}
+	s.loggers[jsonStdoutKey].logger = zap.New(jsonStdoutLoggerCore, zap.AddStacktrace(zap.ErrorLevel), zap.AddCaller(), zap.AddCallerSkip(1))
 
 	//
 	// file logger
@@ -251,10 +274,10 @@ func (s *Singleton) AddLogger(key string, w io.Writer, newLevel Level, opts ...L
 		opt(&addLoggerOpts)
 	}
 
-	instance.loggers[key] = &LogInstance{
+	s.loggers[key] = &LogInstance{
 		enabled: atomic.NewBool(true),
 	}
-	instance.loggers[key].level = zap.NewAtomicLevelAt(zapcore.Level(newLevel))
+	s.loggers[key].level = zap.NewAtomicLevelAt(zapcore.Level(newLevel))
 
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
@@ -264,13 +287,13 @@ func (s *Singleton) AddLogger(key string, w io.Writer, newLevel Level, opts ...L
 	newloggerCore := zapcore.NewCore(
 		zapcore.NewJSONEncoder(encoderConfig),
 		zapcore.AddSync(w),
-		instance.loggers[key].level,
+		s.loggers[key].level,
 	)
 	if addLoggerOpts.samplingEnabled {
 		newloggerCore = zapcore.NewSamplerWithOptions(newloggerCore, s.options.samplingOptions.Tick, s.options.samplingOptions.First, s.options.samplingOptions.Thereafter)
 	}
 
-	instance.loggers[key].logger = zap.New(newloggerCore, zap.AddStacktrace(zap.ErrorLevel), zap.AddCaller(), zap.AddCallerSkip(1))
+	s.loggers[key].logger = zap.New(newloggerCore, zap.AddStacktrace(zap.ErrorLevel), zap.AddCaller(), zap.AddCallerSkip(1))
 }
 
 func (s *Singleton) SetLoggerEnabled(key string, enabled bool) {
@@ -282,7 +305,11 @@ func (s *Singleton) SetLoggerEnabled(key string, enabled bool) {
 }
 
 func (s *Singleton) SetConsoleLogging(enabled bool) {
-	s.SetLoggerEnabled(consoleKey, enabled)
+	s.SetLoggerEnabled(debugConsoleKey, enabled)
+}
+
+func (s *Singleton) SetJsonStdoutLogging(enabled bool) {
+	s.SetLoggerEnabled(jsonStdoutKey, enabled)
 }
 
 func (s *Singleton) SetFileLogging(enabled bool) {
@@ -300,8 +327,16 @@ func (s *Singleton) SetFileLogLevel(newLevel Level) {
 func (s *Singleton) SetConsoleLogLevel(newLevel Level) {
 	s.Lock()
 	defer s.Unlock()
-	if s.loggers[consoleKey] != nil {
-		s.loggers[consoleKey].level.SetLevel(zapcore.Level(newLevel))
+	if s.loggers[debugConsoleKey] != nil {
+		s.loggers[debugConsoleKey].level.SetLevel(zapcore.Level(newLevel))
+	}
+}
+
+func (s *Singleton) SetJsonStdoutLogLevel(newLevel Level) {
+	s.Lock()
+	defer s.Unlock()
+	if s.loggers[jsonStdoutKey] != nil {
+		s.loggers[jsonStdoutKey].level.SetLevel(zapcore.Level(newLevel))
 	}
 }
 
@@ -711,8 +746,11 @@ func (s *Singleton) ErrorInLoggerWriter(format string, args ...interface{}) {
 	if s.loggers[fileKey] != nil && s.loggers[fileKey].enabled.Load() {
 		s.loggers[fileKey].logger.Sugar().Errorf(format, args...)
 	}
-	if s.loggers[consoleKey] != nil && s.loggers[consoleKey].enabled.Load() {
-		s.loggers[consoleKey].logger.Sugar().Errorf(format, args...)
+	if s.loggers[debugConsoleKey] != nil && s.loggers[debugConsoleKey].enabled.Load() {
+		s.loggers[debugConsoleKey].logger.Sugar().Errorf(format, args...)
+	}
+	if s.loggers[jsonStdoutKey] != nil && s.loggers[jsonStdoutKey].enabled.Load() {
+		s.loggers[jsonStdoutKey].logger.Sugar().Errorf(format, args...)
 	}
 }
 
