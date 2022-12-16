@@ -51,7 +51,7 @@ func (a *DataStore) Ping(ctx context.Context) error {
 	}
 
 	var collection *mongo.Collection
-	collection, err = Instance().CollectionLinearWriteRead(ctx, "ping")
+	collection, err = a.CollectionLinearWriteRead(ctx, "ping")
 	if err != nil {
 		task.LogErrorStruct(taskName, "error getting collection for ping write test", logger.Error(err))
 		return err
@@ -78,9 +78,9 @@ func (a *DataStore) runPing(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	task.LogInfoStruct(taskName, "ping runner started")
 
-	a.RLock()
+	a.rwMutex.RLock()
 	heartbeatSeconds := a.options.pingHeartbeatSeconds
-	a.RUnlock()
+	a.rwMutex.RUnlock()
 
 	for {
 		err := a.Ping(ctx)

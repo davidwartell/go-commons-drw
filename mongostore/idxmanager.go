@@ -26,6 +26,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,14 @@ type indexGroup struct {
 	indexes []Index
 }
 
+func (idx Index) MongoIndexName() string {
+	var sb strings.Builder
+	sb.WriteString(idx.Id.String())
+	sb.WriteString(indexNameDelim)
+	sb.WriteString(strconv.FormatUint(idx.Version, 10))
+	return sb.String()
+}
+
 // AddAndEnsureManagedIndexes adds additional indexes to be managed after startup. groupName must be unique and each
 // group must operate on a different set of Collections than another group.  If groupName is already registered
 // then this function does nothing and returns. If this group has Collections overlapping with another managed group
@@ -69,8 +78,8 @@ func (a *DataStore) AddAndEnsureManagedIndexes(groupName string, addManagedIndex
 		return
 	}
 	a.addManagedIndexes(groupName, addManagedIndexes)
-	a.Lock()
-	defer a.Unlock()
+	a.rwMutex.Lock()
+	defer a.rwMutex.Unlock()
 	a.wg.Add(1)
 	go a.runEnsureIndexes(a.ctx, &a.wg, groupName)
 }
@@ -210,7 +219,7 @@ func (a *DataStore) ensureIndexes(ctx context.Context, groupName string) (okOrNo
 CollectionLoop:
 	for collectionName := range collectionMapToIndexNameMap {
 		var collection *mongo.Collection
-		collection, err = Instance().CollectionLinearWriteRead(ctx, collectionName)
+		collection, err = a.CollectionLinearWriteRead(ctx, collectionName)
 		if err != nil {
 			task.LogErrorStruct(
 				taskName,
@@ -338,7 +347,7 @@ CollectionLoop:
 		idx.Model.Options = idx.Model.Options.SetName(idxName)
 
 		var collection *mongo.Collection
-		collection, err = Instance().CollectionLinearWriteRead(ctx, idx.CollectionName)
+		collection, err = a.CollectionLinearWriteRead(ctx, idx.CollectionName)
 		if err != nil {
 			task.LogErrorStruct(
 				taskName,
@@ -385,9 +394,9 @@ func (a *DataStore) runEnsureIndexes(ctx context.Context, wg *sync.WaitGroup, in
 	defer wg.Done()
 	task.LogInfoStruct(taskName, "ensuring indexes", logger.String("indexGroupName", indexGroupName))
 
-	a.RLock()
+	a.rwMutex.RLock()
 	maxBackoffSeconds := a.options.maxFailedEnsureIndexesBackoffSeconds
-	a.RUnlock()
+	a.rwMutex.RUnlock()
 
 	var failedConnectBackoff = &backoff.Backoff{
 		Min:    1000 * time.Millisecond,

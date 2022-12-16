@@ -28,8 +28,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readconcern"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/mongo/writeconcern"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -67,7 +65,7 @@ type Options struct {
 }
 
 type DataStore struct {
-	sync.RWMutex
+	rwMutex                           sync.RWMutex
 	started                           bool
 	options                           *Options
 	mongoClientForWatch               *mongo.Client
@@ -83,50 +81,43 @@ type DataStore struct {
 	managedIndexesLock                sync.RWMutex
 }
 
-var instance *DataStore
-var once sync.Once
-
-type DataStoreOption func(o *Options)
-
-// Instance returns an instance of the data store singleton. This ensures you only have once instance of this per program.
-// All connections will be polled automatically and you have no work for startup or cleaning up connections than
-// running Instance().StartTask() and Instance().StopTask().
+// New returns a new instance of the data store. You should only create one instance in your program and re-use it.
+// You must call Stop() when your program exits.
 //
-// The singleton is multithreading safe.  Reference anywhere you need a connection to mongo or want to add Indexes after startup: e.g.
-// mongostore.Instance().CollectionLinearWriteRead(...)
-// mongostore.Instance().AddAndEnsureManagedIndexes(...)
-func Instance() *DataStore {
-	once.Do(func() {
-		instance = &DataStore{
-			options: &Options{
-				databaseName:                         DefaultDatabaseName,
-				connectTimeoutSeconds:                DefaultConnectTimeoutSeconds,
-				timeoutSecondsShutdown:               DefaultTimeoutSecondsShutdown,
-				timeoutSecondsQuery:                  DefaultTimeoutSecondsQuery,
-				pingHeartbeatSeconds:                 DefaultPingHeartbeatSeconds,
-				maxFailedEnsureIndexesBackoffSeconds: DefaultMaxFailedEnsureIndexesBackoffSeconds,
-				hosts:                                []string{DefaultHost},
-				uri:                                  "",
-				username:                             DefaultUsername,
-				password:                             DefaultPassword,
-				authMechanism:                        DefaultAuthMechanism,
-				maxPoolSize:                          DefaultMaxPoolSize,
-			},
-			allIndexesByPath: make(map[string]Index),
-		}
-	})
-	return instance
+// The instance returned is multithreading safe.
+func New(opts ...DataStoreOption) *DataStore {
+	return newInstance(nil, opts...)
 }
 
-// StartTask starts the background routines.  Call this once on startup from your main.go.
-// Call StopTask() on exit.
-// Indexes supplied here will be managed in a separate go routine after startup.
-func (a *DataStore) StartTask(managedIndexes []Index, opts ...DataStoreOption) {
-	a.Lock()
-	defer a.Unlock()
-	if a.started {
-		return
+func NewWithManagedIndexes(managedIndexes []Index, opts ...DataStoreOption) *DataStore {
+	return newInstance(managedIndexes, opts...)
+}
+
+func newInstance(managedIndexes []Index, opts ...DataStoreOption) *DataStore {
+	store := &DataStore{
+		options: &Options{
+			databaseName:                         DefaultDatabaseName,
+			connectTimeoutSeconds:                DefaultConnectTimeoutSeconds,
+			timeoutSecondsShutdown:               DefaultTimeoutSecondsShutdown,
+			timeoutSecondsQuery:                  DefaultTimeoutSecondsQuery,
+			pingHeartbeatSeconds:                 DefaultPingHeartbeatSeconds,
+			maxFailedEnsureIndexesBackoffSeconds: DefaultMaxFailedEnsureIndexesBackoffSeconds,
+			hosts:                                []string{DefaultHost},
+			uri:                                  "",
+			username:                             DefaultUsername,
+			password:                             DefaultPassword,
+			authMechanism:                        DefaultAuthMechanism,
+			maxPoolSize:                          DefaultMaxPoolSize,
+		},
+		allIndexesByPath: make(map[string]Index),
 	}
+	store.start(managedIndexes, opts...)
+	return store
+}
+
+func (a *DataStore) start(managedIndexes []Index, opts ...DataStoreOption) {
+	a.rwMutex.Lock()
+	defer a.rwMutex.Unlock()
 	task.LogInfoStruct(taskName, "starting")
 	a.ctx, a.cancel = context.WithCancel(context.Background())
 
@@ -147,28 +138,28 @@ func (a *DataStore) StartTask(managedIndexes []Index, opts ...DataStoreOption) {
 	task.LogInfoStruct(taskName, "started")
 }
 
-// StopTask disconnects the mongo clients and stops the background routines.  Call this once on exit of your main.go.
-func (a *DataStore) StopTask() {
-	a.Lock()
+// Stop disconnects the mongo clients and stops the background routines.  Call this once on exit of your main.go.
+func (a *DataStore) Stop() {
+	a.rwMutex.Lock()
 	if !a.started {
-		a.Unlock()
+		a.rwMutex.Unlock()
 		return
 	}
-	a.Unlock()
+	a.rwMutex.Unlock()
 
 	task.LogInfoStruct(taskName, "shutting down")
 
-	a.Lock()
+	a.rwMutex.Lock()
 	if a.cancel != nil {
 		a.cancel()
 	}
-	a.Unlock()
+	a.rwMutex.Unlock()
 
 	// don't hold the lock while waiting - cause a deadlock
 	a.wg.Wait()
 
-	a.Lock()
-	defer a.Unlock()
+	a.rwMutex.Lock()
+	defer a.rwMutex.Unlock()
 	if !a.started {
 		return
 	}
@@ -223,9 +214,9 @@ func (a *DataStore) databaseLinearWriteRead(ctx context.Context) (*mongo.Databas
 		task.LogErrorStruct(taskName, "error getting collection from client", logger.Error(err))
 		return nil, err
 	}
-	a.RLock()
+	a.rwMutex.RLock()
 	dbName := a.options.databaseName
-	a.RUnlock()
+	a.rwMutex.RUnlock()
 	return client.Database(dbName), nil
 }
 
@@ -235,9 +226,9 @@ func (a *DataStore) databaseUnsafeFastWrites(ctx context.Context) (*mongo.Databa
 		task.LogErrorStruct(taskName, "error getting collection from client", logger.Error(err))
 		return nil, err
 	}
-	a.RLock()
+	a.rwMutex.RLock()
 	dbName := a.options.databaseName
-	a.RUnlock()
+	a.rwMutex.RUnlock()
 	return client.Database(dbName), nil
 }
 
@@ -247,9 +238,9 @@ func (a *DataStore) databaseReadNearest(ctx context.Context) (*mongo.Database, e
 		task.LogErrorStruct(taskName, "error getting collection from client", logger.Error(err))
 		return nil, err
 	}
-	a.RLock()
+	a.rwMutex.RLock()
 	dbName := a.options.databaseName
-	a.RUnlock()
+	a.rwMutex.RUnlock()
 	return client.Database(dbName), nil
 }
 
@@ -259,9 +250,9 @@ func (a *DataStore) databaseReadSecondaryPreferred(ctx context.Context) (*mongo.
 		task.LogErrorStruct(taskName, "error getting collection from client", logger.Error(err))
 		return nil, err
 	}
-	a.RLock()
+	a.rwMutex.RLock()
 	dbName := a.options.databaseName
-	a.RUnlock()
+	a.rwMutex.RUnlock()
 	return client.Database(dbName), nil
 }
 
@@ -271,9 +262,9 @@ func (a *DataStore) databaseForWatch(ctx context.Context) (*mongo.Database, erro
 		task.LogErrorStruct(taskName, "error getting collection from client", logger.Error(err))
 		return nil, err
 	}
-	a.RLock()
+	a.rwMutex.RLock()
 	dbName := a.options.databaseName
-	a.RUnlock()
+	a.rwMutex.RUnlock()
 	return client.Database(dbName), nil
 }
 
@@ -356,8 +347,8 @@ func (a *DataStore) CollectionForWatch(ctx context.Context, name string) (*mongo
 }
 
 func (a *DataStore) ContextTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	a.RLock()
-	defer a.RUnlock()
+	a.rwMutex.RLock()
+	defer a.rwMutex.RUnlock()
 	return context.WithTimeout(ctx, a.queryTimeout())
 }
 
@@ -369,17 +360,17 @@ func (a *DataStore) queryTimeout() time.Duration {
 
 //nolint:golint,unused
 func (a *DataStore) unsafeFastClient(ctx context.Context) (client *mongo.Client, err error) {
-	a.RLock()
+	a.rwMutex.RLock()
 	if !a.started {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		err = ErrorServiceNotStarted
 		return
 	} else if a.mongoClientUnsafeFast != nil {
 		client = a.mongoClientUnsafeFast
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		return
 	} else {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 	}
 
 	client, err = a.connectUnsafeFastWrites(ctx)
@@ -387,17 +378,17 @@ func (a *DataStore) unsafeFastClient(ctx context.Context) (client *mongo.Client,
 }
 
 func (a *DataStore) clientReadNearest(ctx context.Context) (client *mongo.Client, err error) {
-	a.RLock()
+	a.rwMutex.RLock()
 	if !a.started {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		err = ErrorServiceNotStarted
 		return
 	} else if a.mongoClientReadNearest != nil {
 		client = a.mongoClientReadNearest
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		return
 	} else {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 	}
 
 	client, err = a.connectReadNearest(ctx)
@@ -405,17 +396,17 @@ func (a *DataStore) clientReadNearest(ctx context.Context) (client *mongo.Client
 }
 
 func (a *DataStore) clientReadSecondaryPreferred(ctx context.Context) (client *mongo.Client, err error) {
-	a.RLock()
+	a.rwMutex.RLock()
 	if !a.started {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		err = ErrorServiceNotStarted
 		return
 	} else if a.mongoClientReadSecondaryPreferred != nil {
 		client = a.mongoClientReadSecondaryPreferred
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		return
 	} else {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 	}
 
 	client, err = a.connectReadSecondaryPreferred(ctx)
@@ -423,8 +414,8 @@ func (a *DataStore) clientReadSecondaryPreferred(ctx context.Context) (client *m
 }
 
 func (a *DataStore) connectReadNearest(clientCtx context.Context) (client *mongo.Client, err error) {
-	a.Lock()
-	defer a.Unlock()
+	a.rwMutex.Lock()
+	defer a.rwMutex.Unlock()
 
 	if a.mongoClientReadNearest != nil {
 		client = a.mongoClientReadNearest
@@ -453,8 +444,8 @@ func (a *DataStore) connectReadNearest(clientCtx context.Context) (client *mongo
 }
 
 func (a *DataStore) connectReadSecondaryPreferred(clientCtx context.Context) (client *mongo.Client, err error) {
-	a.Lock()
-	defer a.Unlock()
+	a.rwMutex.Lock()
+	defer a.rwMutex.Unlock()
 
 	if a.mongoClientReadSecondaryPreferred != nil {
 		client = a.mongoClientReadSecondaryPreferred
@@ -483,17 +474,17 @@ func (a *DataStore) connectReadSecondaryPreferred(clientCtx context.Context) (cl
 }
 
 func (a *DataStore) clientLinearWriteRead(ctx context.Context) (client *mongo.Client, err error) {
-	a.RLock()
+	a.rwMutex.RLock()
 	if !a.started {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		err = ErrorServiceNotStarted
 		return
 	} else if a.mongoClientLinearReadWrite != nil {
 		client = a.mongoClientLinearReadWrite
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		return
 	} else {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 	}
 
 	client, err = a.connectLinearWriteRead(ctx)
@@ -501,17 +492,17 @@ func (a *DataStore) clientLinearWriteRead(ctx context.Context) (client *mongo.Cl
 }
 
 func (a *DataStore) clientForWatch(ctx context.Context) (client *mongo.Client, err error) {
-	a.RLock()
+	a.rwMutex.RLock()
 	if !a.started {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		err = ErrorServiceNotStarted
 		return
 	} else if a.mongoClientForWatch != nil {
 		client = a.mongoClientForWatch
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		return
 	} else {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 	}
 
 	client, err = a.connectForWatch(ctx)
@@ -519,8 +510,8 @@ func (a *DataStore) clientForWatch(ctx context.Context) (client *mongo.Client, e
 }
 
 func (a *DataStore) connectForWatch(clientCtx context.Context) (client *mongo.Client, err error) {
-	a.Lock()
-	defer a.Unlock()
+	a.rwMutex.Lock()
+	defer a.rwMutex.Unlock()
 
 	if a.mongoClientForWatch != nil {
 		client = a.mongoClientForWatch
@@ -549,8 +540,8 @@ func (a *DataStore) connectForWatch(clientCtx context.Context) (client *mongo.Cl
 }
 
 func (a *DataStore) connectLinearWriteRead(clientCtx context.Context) (client *mongo.Client, err error) {
-	a.Lock()
-	defer a.Unlock()
+	a.rwMutex.Lock()
+	defer a.rwMutex.Unlock()
 
 	if a.mongoClientLinearReadWrite != nil {
 		client = a.mongoClientLinearReadWrite
@@ -579,17 +570,17 @@ func (a *DataStore) connectLinearWriteRead(clientCtx context.Context) (client *m
 }
 
 func (a *DataStore) clientUnsafeFastWrites(ctx context.Context) (client *mongo.Client, err error) {
-	a.RLock()
+	a.rwMutex.RLock()
 	if !a.started {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		err = ErrorServiceNotStarted
 		return
 	} else if a.mongoClientUnsafeFast != nil {
 		client = a.mongoClientUnsafeFast
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 		return
 	} else {
-		a.RUnlock()
+		a.rwMutex.RUnlock()
 	}
 
 	client, err = a.connectUnsafeFastWrites(ctx)
@@ -597,8 +588,8 @@ func (a *DataStore) clientUnsafeFastWrites(ctx context.Context) (client *mongo.C
 }
 
 func (a *DataStore) connectUnsafeFastWrites(clientCtx context.Context) (client *mongo.Client, err error) {
-	a.Lock()
-	defer a.Unlock()
+	a.rwMutex.Lock()
+	defer a.rwMutex.Unlock()
 
 	if a.mongoClientUnsafeFast != nil {
 		client = a.mongoClientUnsafeFast
@@ -648,106 +639,4 @@ func (a *DataStore) standardOptions() (clientOptions *mongooptions.ClientOptions
 	clientOptions.SetMinPoolSize(1)
 	clientOptions.SetCompressors([]string{"snappy"})
 	return
-}
-
-func (idx Index) MongoIndexName() string {
-	var sb strings.Builder
-	sb.WriteString(idx.Id.String())
-	sb.WriteString(indexNameDelim)
-	sb.WriteString(strconv.FormatUint(idx.Version, 10))
-	return sb.String()
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithDatabaseName(databaseName string) DataStoreOption {
-	return func(o *Options) {
-		o.databaseName = databaseName
-	}
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithTimeoutSecondsShutdown(timeoutSecondsShutdown uint64) DataStoreOption {
-	return func(o *Options) {
-		o.timeoutSecondsShutdown = timeoutSecondsShutdown
-	}
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithTimeoutSecondsQuery(timeoutSecondsQuery uint64) DataStoreOption {
-	return func(o *Options) {
-		o.timeoutSecondsQuery = timeoutSecondsQuery
-	}
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithPingHeartbeatSeconds(pingHeartbeatSeconds uint64) DataStoreOption {
-	return func(o *Options) {
-		o.pingHeartbeatSeconds = pingHeartbeatSeconds
-	}
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithMaxFailedEnsureIndexesBackoffSeconds(maxFailedEnsureIndexesBackoffSeconds uint64) DataStoreOption {
-	return func(o *Options) {
-		o.maxFailedEnsureIndexesBackoffSeconds = maxFailedEnsureIndexesBackoffSeconds
-	}
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithHosts(hosts []string) DataStoreOption {
-	return func(o *Options) {
-		o.hosts = hosts
-	}
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithUri(uri string) DataStoreOption {
-	return func(o *Options) {
-		o.uri = uri
-	}
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithUsername(username string) DataStoreOption {
-	return func(o *Options) {
-		o.username = username
-	}
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithPassword(password string) DataStoreOption {
-	return func(o *Options) {
-		o.password = password
-	}
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithAuthMechanism(authMechanism string) DataStoreOption {
-	return func(o *Options) {
-		o.authMechanism = authMechanism
-	}
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithMaxPoolSize(maxPoolSize uint64) DataStoreOption {
-	return func(o *Options) {
-		o.maxPoolSize = maxPoolSize
-	}
-}
-
-//goland:noinspection GoUnusedExportedFunction
-func WithConnectTimeoutSeconds(connectTimeoutSeconds uint64) DataStoreOption {
-	return func(o *Options) {
-		o.connectTimeoutSeconds = connectTimeoutSeconds
-	}
-}
-
-func IsIndexNotFoundError(err error) bool {
-	if err == nil {
-		return false
-	} else if commandErr, ok := err.(mongo.CommandError); ok {
-		return commandErr.Code == 27 // Mongo Error Code 27 IndexNotFound
-	} else {
-		return false
-	}
 }

@@ -186,7 +186,7 @@ func NewElector(
 	e.wg.Add(1)
 	go expireWorker(e.ctx, &e.wg, e.config, e.database, leaderExpiredChanRW, newLeaderChanRW)
 	e.wg.Add(1)
-	go elect(e.ctx, &e.wg, e.config, leaderExpiredChanRW, newLeaderChanRW)
+	go elect(e.ctx, &e.wg, e.config, e.database, leaderExpiredChanRW, newLeaderChanRW)
 
 	e.started = true
 	return
@@ -302,10 +302,10 @@ func leaderManager(
 	}
 }
 
-func doExpireWork(ctx context.Context, config electorConfig) (latestLeader *ElectedLeader) {
+func doExpireWork(ctx context.Context, config electorConfig, database *mongostore.DataStore) (latestLeader *ElectedLeader) {
 	var err error
 	var collection *mongo.Collection
-	collection, err = mongostore.Instance().CollectionLinearWriteRead(ctx, collectionName)
+	collection, err = database.CollectionLinearWriteRead(ctx, collectionName)
 	if err != nil {
 		logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error"), logger.Error(err))
 		return
@@ -376,7 +376,7 @@ func expireWorker(ctx context.Context, wg *sync.WaitGroup, config electorConfig,
 			indexEnsured = true
 		}
 
-		latestLeader := doExpireWork(ctx, config)
+		latestLeader := doExpireWork(ctx, config, database)
 		newLeaderChan <- latestLeader
 		// notify the elector if there is no leader
 		if latestLeader == nil {
@@ -403,7 +403,7 @@ func followerLeaderWatch(ctx context.Context, leaderExpiredChan <-chan struct{})
 // If election lost:
 //  1. start followerWorker
 //  2. watch for deletes to the collection and if the leader for our e.boundary is deleted run election
-func elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, leaderExpiredChan <-chan struct{}, newLeaderChan chan<- *ElectedLeader) {
+func elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, database *mongostore.DataStore, leaderExpiredChan <-chan struct{}, newLeaderChan chan<- *ElectedLeader) {
 	defer wg.Done()
 	defer func() {
 		if err := recover(); err != nil {
@@ -422,7 +422,7 @@ func elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, leader
 			break
 		}
 
-		won, err := tryWinElectionLoop(ctx, config, newLeaderChan)
+		won, err := tryWinElectionLoop(ctx, config, database, newLeaderChan)
 		if err != nil {
 			break
 		}
@@ -434,7 +434,7 @@ func elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, leader
 			if config.followerWorker != nil {
 				config.followerWorker.Start(ctx, config.thisLeaderUUID)
 			}
-			leaderHeartbeat(ctx, config)
+			leaderHeartbeat(ctx, config, database)
 			logger.Instance().Info(getLogPrefix(config.boundary, config.thisLeaderUUID, "leadership lost"))
 		} else {
 			if config.followerWorker != nil {
@@ -449,7 +449,7 @@ func elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, leader
 }
 
 // leaderHeartbeat update ttlExpire to keep leadership. Return if leadership lost, context cancelled, or operations on mongo fail.
-func leaderHeartbeat(ctx context.Context, config electorConfig) {
+func leaderHeartbeat(ctx context.Context, config electorConfig, database *mongostore.DataStore) {
 	for {
 		select {
 		case <-time.After(time.Second * time.Duration(config.options.LeaderHeartbeatSeconds)):
@@ -458,7 +458,7 @@ func leaderHeartbeat(ctx context.Context, config electorConfig) {
 		}
 
 		// get a collection, if fail wait and try again
-		collection, err := mongostore.Instance().CollectionLinearWriteRead(ctx, collectionName)
+		collection, err := database.CollectionLinearWriteRead(ctx, collectionName)
 		if err != nil {
 			logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error getting mongo collection"), logger.Error(err))
 			return
@@ -491,10 +491,10 @@ func leaderHeartbeat(ctx context.Context, config electorConfig) {
 // tryWinElectionLoop
 // runs tryWinElection in a loop until it wins or loses without or the context is cancelled
 // returns err only if context cancelled
-func tryWinElectionLoop(ctx context.Context, config electorConfig, newLeaderChan chan<- *ElectedLeader) (won bool, err error) {
+func tryWinElectionLoop(ctx context.Context, config electorConfig, database *mongostore.DataStore, newLeaderChan chan<- *ElectedLeader) (won bool, err error) {
 	for {
 		// if we win or lose election without unexpected error then return
-		won, err = tryWinElection(ctx, config, newLeaderChan)
+		won, err = tryWinElection(ctx, config, database, newLeaderChan)
 		if err == nil {
 			return
 		}
@@ -508,7 +508,7 @@ func tryWinElectionLoop(ctx context.Context, config electorConfig, newLeaderChan
 	}
 }
 
-func tryWinElection(ctx context.Context, config electorConfig, newLeaderChan chan<- *ElectedLeader) (won bool, err error) {
+func tryWinElection(ctx context.Context, config electorConfig, database *mongostore.DataStore, newLeaderChan chan<- *ElectedLeader) (won bool, err error) {
 	var currentLeader *ElectedLeader
 	defer func() {
 		newLeaderChan <- currentLeader
@@ -516,7 +516,7 @@ func tryWinElection(ctx context.Context, config electorConfig, newLeaderChan cha
 
 	// get a collection, if fail wait and try again
 	var collection *mongo.Collection
-	collection, err = mongostore.Instance().CollectionLinearWriteRead(ctx, collectionName)
+	collection, err = database.CollectionLinearWriteRead(ctx, collectionName)
 	if err != nil {
 		logger.Instance().ErrorIgnoreCancel(ctx, getLogPrefix(config.boundary, config.thisLeaderUUID, "error getting mongo collection"), logger.Error(err))
 		err = errors.Wrap(err, "error getting mongo collection")
