@@ -183,14 +183,15 @@ func (a *DataStore) addManagedIndexes(groupName string, addManagedIndexes []Inde
 // Only return error if connect error.
 func (a *DataStore) ensureIndexes(ctx context.Context, groupName string) (okOrNoRetry bool) {
 	defer task.HandlePanic(taskName)
-	a.managedIndexesLock.Lock()
-	defer a.managedIndexesLock.Unlock()
 
 	err := a.Ping(ctx)
 	if err != nil {
 		task.LogErrorStruct(taskName, "ensure indexes: mongo ping failed aborting", logger.Error(err))
 		return false
 	}
+
+	a.managedIndexesLock.Lock()
+	defer a.managedIndexesLock.Unlock()
 
 	//
 	// 1. Build map of collections and managed index names
