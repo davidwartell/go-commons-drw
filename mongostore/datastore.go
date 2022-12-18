@@ -625,11 +625,14 @@ func (a *DataStore) standardOptions() (clientOptions *mongooptions.ClientOptions
 	} else {
 		clientOptions = mongooptions.Client().SetHosts(a.options.hosts)
 	}
-	if a.options.username != "" {
-		credentials := mongooptions.Credential{
-			AuthMechanism: a.options.authMechanism,
-			Username:      a.options.username,
-			Password:      a.options.password,
+	if a.options.username != "" || a.options.authMechanism != "" {
+		var credentials mongooptions.Credential
+		if a.options.authMechanism != "" {
+			credentials.AuthMechanism = a.options.authMechanism
+		}
+		if a.options.username != "" {
+			credentials.Username = a.options.username
+			credentials.Password = a.options.password
 		}
 		clientOptions.SetAuth(credentials)
 	}
