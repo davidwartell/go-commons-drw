@@ -450,6 +450,30 @@ func elect(ctx context.Context, wg *sync.WaitGroup, config electorConfig, databa
 
 // leaderHeartbeat update ttlExpire to keep leadership. Return if leadership lost, context cancelled, or operations on mongo fail.
 func leaderHeartbeat(ctx context.Context, config electorConfig, database *mongostore.DataStore) {
+	runLeaderHeartbeatLoop(ctx, config, database)
+
+	// on exit from the loop immediately delete our leader record so new election does not have to wait for timeout
+	cancelCtx, cancelCncl := context.WithTimeout(context.Background(), time.Duration(3)*time.Second)
+	defer cancelCncl()
+	cancelCollection, err := database.CollectionLinearWriteRead(cancelCtx, collectionName)
+	if err != nil {
+		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error getting mongo collection for leaderHeartbeat cancelled context"), logger.Error(err))
+		return
+	}
+	cancelFilter := bson.D{
+		{"_id", config.boundary},
+		{"leaderUUID", config.thisLeaderUUID.Raw()},
+	}
+	var dltRslt *mongo.DeleteResult
+	dltRslt, err = cancelCollection.DeleteOne(cancelCtx, cancelFilter)
+	if err != nil {
+		logger.Instance().Error(getLogPrefix(config.boundary, config.thisLeaderUUID, "error on DeleteOne for leaderHeartbeat cancelled context"), logger.Error(err))
+		return
+	}
+	logger.Instance().Info(getLogPrefix(config.boundary, config.thisLeaderUUID, "leader attempted to delete self record - ctx cancelled"), logger.Int64("deletedCount", dltRslt.DeletedCount))
+}
+
+func runLeaderHeartbeatLoop(ctx context.Context, config electorConfig, database *mongostore.DataStore) {
 	for {
 		select {
 		case <-time.After(time.Second * time.Duration(config.options.LeaderHeartbeatSeconds)):
