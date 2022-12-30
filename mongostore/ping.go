@@ -51,7 +51,7 @@ func (a *DataStore) Ping(ctx context.Context) error {
 	}
 
 	var collection *mongo.Collection
-	collection, err = a.CollectionLinearWriteRead(ctx, "ping")
+	collection, err = a.CollectionUnsafeFastWrites(ctx, "ping")
 	if err != nil {
 		task.LogErrorStruct(taskName, "error getting collection for ping write test", logger.Error(err))
 		return err
