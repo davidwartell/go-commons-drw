@@ -50,7 +50,8 @@ type Index struct {
 	Version        uint64 // increment any time the model or options changes - calling createIndex() with the same name but different \
 	// options than an existing index will throw an error MongoError: \
 	// Index with name: **MongoIndexName** already exists with different options
-	Model mongo.IndexModel
+	Model       mongo.IndexModel
+	SkipVersion bool
 }
 
 type indexGroup struct {
@@ -61,8 +62,10 @@ type indexGroup struct {
 func (idx Index) MongoIndexName() string {
 	var sb strings.Builder
 	sb.WriteString(idx.Id.String())
-	sb.WriteString(indexNameDelim)
-	sb.WriteString(strconv.FormatUint(idx.Version, 10))
+	if !idx.SkipVersion {
+		sb.WriteString(indexNameDelim)
+		sb.WriteString(strconv.FormatUint(idx.Version, 10))
+	}
 	return sb.String()
 }
 
