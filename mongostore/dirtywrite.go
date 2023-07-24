@@ -40,7 +40,7 @@ const numRetries = 25
 //
 //		filter := bson.D{
 //			{"_id", person.Id},	// Note: must use _id or some indexed field with a unique constraint.
-//	     	// where device.DirtyWriteGuard is 0 on new or == to the dirtyWriteGuard field of the entity we expect in the collection
+//	     	// where person.DirtyWriteGuard is 0 on new or == to the dirtyWriteGuard field of the entity we expect in the collection
 //			{"dirtyWriteGuard", person.DirtyWriteGuard}, // this value should be unmodified by your code as it was loaded from mongo.
 //		}
 //
@@ -98,6 +98,60 @@ func CheckForDirtyWriteOnUpsert(updateResult *mongo.UpdateResult, inputErr error
 		// Dirty Write error if filter did not match an existing document (including equality on dirtyWriteGuard field)
 		// And no inserted document
 		err = DirtyWriteError
+		return
+	}
+	return
+}
+
+// CheckForDirtyWriteOnDeleteOne is expected to be used like this:
+// Add a field to your struct called "DirtyWriteGuard"
+//
+//	type Person struct {
+//	  ...
+//	  DirtyWriteGuard uint64  `bson:"dirtyWriteGuard"`
+//	}
+//
+// Then when you delete from mongo and want to ensure another thread has not already upserted a replacement document:
+//
+//		filter := bson.D{
+//			{"_id", person.Id},	// Note: must use _id or some indexed field with a unique constraint.
+//	     	// where person.DirtyWriteGuard is 0 on new or == to the dirtyWriteGuard field of the entity we expect in the collection
+//			{"dirtyWriteGuard", person.DirtyWriteGuard}, // this value should be unmodified by your code as it was loaded from mongo.
+//		}
+//
+//		var deleteResult *mongo.DeleteResult
+//		deleteResult, err = collection.DeleteOne(ctx, filter)
+//		err = mongostore.CheckForDirtyWriteOnDeleteOne(deleteResult, err)
+//		if err != nil {
+//			if err != mongostore.DirtyWriteError {
+//				// only log or mess with err returned if not a DirtyWriteError
+//				logger.Instance().ErrorIgnoreCancel(ctx, "error on ReplaceOne for Person", logger.Error(err))
+//				err = errors.Wrap(err, "error on ReplaceOne for Person")
+//			}
+//			return
+//		}
+//
+// In the expected dirty write case mongo will return deleteResult.DeletedCount == 0.
+// Meaning that 0 documents matched the filter with the unique id and the dirtyWriteGuard equality.
+//
+// In case of no dirty write and no error returned by the UpdateOne() we expect one document to be deleted
+// (deleteResult.DeletedCount == 1).
+//
+//goland:noinspection GoUnusedExportedFunction
+func CheckForDirtyWriteOnDeleteOne(deleteResult *mongo.DeleteResult, inputErr error) (err error) {
+	if inputErr != nil {
+		// if error pass it through
+		err = inputErr
+		return
+	}
+	if deleteResult.DeletedCount == 0 {
+		// Dirty Write error if filter did not match an existing document (including equality on dirtyWriteGuard field)
+		// And no deleted document
+		err = DirtyWriteError
+		return
+	} else if deleteResult.DeletedCount > 1 {
+		// this should  never happen
+		err = errors.New("DeleteOne returned more than one document deleted")
 		return
 	}
 	return
