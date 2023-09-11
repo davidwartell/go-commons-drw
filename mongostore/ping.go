@@ -29,29 +29,28 @@ import (
 	"time"
 )
 
-func (a *DataStore) Ping(ctx context.Context) error {
+func (a *DataStore) Ping(clientCtx context.Context) error {
 	defer task.HandlePanic(taskName)
 	var err error
 	var client *mongo.Client
 
-	var cancel context.CancelFunc
-	ctx, cancel = a.ContextTimeout(ctx)
+	queryCtx, cancel := a.ContextTimeout(clientCtx)
 	defer cancel()
 
-	client, err = a.clientUnsafeFastWrites(ctx)
+	client, err = a.clientUnsafeFastWrites(clientCtx)
 	if err != nil {
 		task.LogErrorStruct(taskName, "error getting client for ping", logger.Error(err))
 		return err
 	}
 
-	err = client.Ping(ctx, nil)
+	err = client.Ping(queryCtx, nil)
 	if err != nil {
 		err2 := errors.Wrap(err, "Mongo ping failed")
 		return err2
 	}
 
 	var collection *mongo.Collection
-	collection, err = a.CollectionUnsafeFastWrites(ctx, "ping")
+	collection, err = a.CollectionUnsafeFastWrites(clientCtx, "ping")
 	if err != nil {
 		task.LogErrorStruct(taskName, "error getting collection for ping write test", logger.Error(err))
 		return err
@@ -66,7 +65,7 @@ func (a *DataStore) Ping(ctx context.Context) error {
 	}
 	updateOptions := &mongooptions.UpdateOptions{}
 	updateOptions = updateOptions.SetUpsert(true)
-	_, err = collection.UpdateOne(ctx, filter, update, updateOptions)
+	_, err = collection.UpdateOne(queryCtx, filter, update, updateOptions)
 	if err != nil {
 		return err
 	}

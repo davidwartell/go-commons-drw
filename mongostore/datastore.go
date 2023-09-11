@@ -85,10 +85,13 @@ type DataStore struct {
 // You must call Stop() when your program exits.
 //
 // The instance returned is multithreading safe.
+//
+//goland:noinspection GoUnusedExportedFunction
 func New(opts ...DataStoreOption) *DataStore {
 	return newInstance(nil, opts...)
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func NewWithManagedIndexes(managedIndexes []Index, opts ...DataStoreOption) *DataStore {
 	return newInstance(managedIndexes, opts...)
 }
@@ -344,18 +347,6 @@ func (a *DataStore) CollectionForWatch(ctx context.Context, name string) (*mongo
 		return nil, err
 	}
 	return database.Collection(name), nil
-}
-
-func (a *DataStore) ContextTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	a.rwMutex.RLock()
-	defer a.rwMutex.RUnlock()
-	return context.WithTimeout(ctx, a.queryTimeout())
-}
-
-// queryTimeout returns query timeout as time.Duration
-// callers MUST hold a.Lock
-func (a *DataStore) queryTimeout() time.Duration {
-	return time.Duration(a.options.timeoutSecondsQuery) * time.Second
 }
 
 //nolint:golint,unused
