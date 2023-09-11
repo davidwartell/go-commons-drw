@@ -35,17 +35,21 @@ type Instance struct {
 }
 
 type Heartbeat interface {
-	StillRunning(ctx context.Context)
+	StillRunning(ctx context.Context) (ok bool)
 }
 
-// NewWatchDog creates a new watchdog Instance. Watchdog will call the cancel function associated with the returned context when
-// maxRunTime has been exceeded.  Pass the context returned to a long-running tasks that can be interrupted by a cancelled context.
+// NewWatchDog creates a new watchdog Instance. Watchdog will call the cancel function associated with the returned
+// context when maxRunTime has been exceeded or Heartbeat.StillRunning return false.  Pass the context returned to a
+// long-running tasks that can be interrupted by a cancelled context.
 //
-// Cancel() should be called on the returned Instance when you are done, or it will not be garbage collected until maxRunTime expires.
+// Cancel() should be called on the returned Instance when you are done, or it will not be garbage collected until
+// maxRunTime expires.
 //
-// I'm using watchdog to time limit background tasks running in golang on an IoT sensor.  The Heartbeat callback is used to reset
-// (in)visibility of the task in a queue, so it is not dispatched to another sensor.  Could also be used for long-running tasks
-// driven by an AWS SQS queue for example.
+// I'm using watchdog to time limit background tasks running in golang on an IoT sensor.  The Heartbeat callback is used
+// to reset (in)visibility of the task in a queue, so it is not dispatched to another sensor.  Could also be used for
+// long-running tasks driven by an AWS SQS queue for example.
+//
+//goland:noinspection GoUnusedExportedFunction
 func NewWatchDog(ctx context.Context, maxRunTime time.Duration) (*Instance, context.Context) {
 	return NewWatchDogWithHeartbeat(ctx, maxRunTime, nil, 0)
 }
@@ -101,7 +105,11 @@ func (i *Instance) watchdogLoop(maxRunTimeTimer *timer.Timer, sleepTimerPtr *tim
 			// this case will block forever on read of nil channel if i.heartbeat == nil || i.heartbeatInterval <= 0
 			sleepTimerPtr.Read = true
 			if i.heartbeat != nil {
-				i.heartbeat.StillRunning(i.ctx)
+				if ok := i.heartbeat.StillRunning(i.ctx); !ok {
+					logger.Instance().Error("watchdog heartbeat returned not ok - cancelling")
+					i.cancel()
+					return
+				}
 			}
 		case <-maxRunTimeTimer.C:
 			// if max run time expired log error and cancel
