@@ -26,7 +26,7 @@ type RetryFunc func() error
 
 var DirtyWriteError = errors.New("dirty write error")
 
-const numRetries = 25
+const numRetries = 50
 
 // CheckForDirtyWriteOnUpsert is expected to be used like this:
 // Add a field to your struct called "DirtyWriteGuard"
