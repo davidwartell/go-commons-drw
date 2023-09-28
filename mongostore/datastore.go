@@ -23,6 +23,7 @@ import (
 	"github.com/davidwartell/go-commons-drw/logger"
 	"github.com/davidwartell/go-commons-drw/task"
 	"github.com/pkg/errors"
+	"go.mongodb.org/mongo-driver/event"
 	"go.mongodb.org/mongo-driver/mongo"
 	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readconcern"
@@ -62,6 +63,7 @@ type Options struct {
 	password                             string
 	authMechanism                        string // Supported values include "SCRAM-SHA-256", "SCRAM-SHA-1", "MONGODB-CR", "PLAIN", "GSSAPI", "MONGODB-X509", and "MONGODB-AWS".
 	maxPoolSize                          uint64
+	monitor                              *event.CommandMonitor
 }
 
 type DataStore struct {
@@ -632,5 +634,6 @@ func (a *DataStore) standardOptions() (clientOptions *mongooptions.ClientOptions
 	clientOptions.SetMaxPoolSize(a.options.maxPoolSize)
 	clientOptions.SetMinPoolSize(1)
 	clientOptions.SetCompressors([]string{"snappy"})
+	clientOptions.SetMonitor(a.options.monitor)
 	return
 }

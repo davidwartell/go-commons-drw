@@ -17,7 +17,10 @@
 
 package mongostore
 
-import "go.mongodb.org/mongo-driver/mongo"
+import (
+	"go.mongodb.org/mongo-driver/event"
+	"go.mongodb.org/mongo-driver/mongo"
+)
 
 type DataStoreOption func(o *Options)
 
@@ -25,6 +28,13 @@ type DataStoreOption func(o *Options)
 func WithDatabaseName(databaseName string) DataStoreOption {
 	return func(o *Options) {
 		o.databaseName = databaseName
+	}
+}
+
+//goland:noinspection GoUnusedExportedFunction
+func WithMonitor(monitor *event.CommandMonitor) DataStoreOption {
+	return func(o *Options) {
+		o.monitor = monitor
 	}
 }
 
