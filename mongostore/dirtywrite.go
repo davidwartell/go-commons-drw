@@ -213,17 +213,19 @@ func IsDuplicateKeyError(err error) bool {
 		return false
 	} else if bulkWriteErr, ok := err.(mongo.BulkWriteException); ok && bulkWriteErr.WriteConcernError == nil {
 		for _, writeError := range bulkWriteErr.WriteErrors {
-			if writeError.Code != 11000 {
+			if !mongo.IsDuplicateKeyError(writeError) {
 				return false
 			}
 		}
 		return true
 	} else if writeException, ok := err.(mongo.WriteException); ok && writeException.WriteConcernError == nil {
 		for _, writeError := range writeException.WriteErrors {
-			if writeError.Code != 11000 {
+			if !mongo.IsDuplicateKeyError(writeError) {
 				return false
 			}
 		}
+		return true
+	} else if mongo.IsDuplicateKeyError(err) {
 		return true
 	} else {
 		return false
