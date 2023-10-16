@@ -79,29 +79,26 @@ func (i *Instance) Cancel() {
 func (i *Instance) run() {
 	defer i.wg.Done()
 
-	var sleepTimerPtr *timer.Timer
-	var sleepTimerChan <-chan time.Time
+	var sleepTimer *timer.Timer
 	if i.heartbeat != nil && i.heartbeatInterval > 0 {
-		var sleepTimer timer.Timer
-		sleepTimerPtr = &sleepTimer
+		sleepTimer = new(timer.Timer)
 		defer sleepTimer.Stop()
-		sleepTimerChan = sleepTimer.C
 	}
 
 	var maxRunTimeTimer timer.Timer
 	defer maxRunTimeTimer.Stop()
 	maxRunTimeTimer.Reset(i.maxRunTime)
 
-	i.watchdogLoop(&maxRunTimeTimer, sleepTimerPtr, sleepTimerChan)
+	i.watchdogLoop(&maxRunTimeTimer, sleepTimer)
 }
 
-func (i *Instance) watchdogLoop(maxRunTimeTimer *timer.Timer, sleepTimerPtr *timer.Timer, sleepTimerChan <-chan time.Time) {
+func (i *Instance) watchdogLoop(maxRunTimeTimer *timer.Timer, sleepTimerPtr *timer.Timer) {
 	for {
 		if sleepTimerPtr != nil {
 			sleepTimerPtr.Reset(i.heartbeatInterval)
 		}
 		select {
-		case <-sleepTimerChan:
+		case <-sleepTimerPtr.C:
 			// this case will block forever on read of nil channel if i.heartbeat == nil || i.heartbeatInterval <= 0
 			sleepTimerPtr.Read = true
 			if i.heartbeat != nil {
