@@ -37,9 +37,9 @@ type PingFunc func(ctx context.Context, conn *grpc.ClientConn) (time.Duration, e
 type Option func(o *Options)
 
 //goland:noinspection GoUnusedExportedFunction
-func WithKeepaliveClientParams(keepalive *keepalive.ClientParameters) Option {
+func WithKeepaliveClientParams(keepalive keepalive.ClientParameters) Option {
 	return func(o *Options) {
-		o.keepalive = keepalive
+		o.keepalive = &keepalive
 	}
 }
 
