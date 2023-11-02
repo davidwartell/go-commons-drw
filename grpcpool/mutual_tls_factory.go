@@ -70,7 +70,9 @@ func (f MutualTLSFactory) NewConnection(ctx context.Context) (*grpc.ClientConn, 
 }
 
 func (f MutualTLSFactory) NewConnectionWithDialOpts(ctx context.Context, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	allOpts := make([]grpc.DialOption, 0)
+	allOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(f.credentials),
+	}
 
 	if f.options.keepalive != nil {
 		allOpts = append(allOpts, grpc.WithKeepaliveParams(*f.options.keepalive))
