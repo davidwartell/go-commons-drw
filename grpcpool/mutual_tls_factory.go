@@ -27,23 +27,17 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/security/advancedtls"
 	"time"
 )
 
 type MutualTLSFactory struct {
-	credentials          credentials.TransportCredentials
-	dialAddr             string
-	keepAliveTime        time.Duration
-	keepAliveTimeout     time.Duration
-	pingFunc             PingFunc
-	useSnappyCompression bool
-	useOtel              bool
+	credentials      credentials.TransportCredentials
+	dialAddr         string
+	keepAliveTime    time.Duration
+	keepAliveTimeout time.Duration
+	options          *Options
 }
-
-// PingFunc should send a GRPC ping/pong to the other side of conn.  Returns err or latency.
-type PingFunc func(ctx context.Context, conn *grpc.ClientConn) (time.Duration, error)
 
 //goland:noinspection GoUnusedExportedFunction
 func NewMutualTLSFactory(
@@ -51,19 +45,14 @@ func NewMutualTLSFactory(
 	clientCertPEM []byte,
 	clientKeyPEM []byte,
 	serverAddress string,
-	keepAliveTime time.Duration,
-	keepAliveTimeout time.Duration,
-	pingFunc PingFunc,
-	useSnappyCompression bool,
-	useOtel bool,
+	opts ...Option,
 ) (MutualTLSFactory, error) {
 	var err error
 	factory := MutualTLSFactory{
-		keepAliveTime:        keepAliveTime,
-		keepAliveTimeout:     keepAliveTimeout,
-		pingFunc:             pingFunc,
-		useSnappyCompression: useSnappyCompression,
-		useOtel:              useOtel,
+		options: new(Options),
+	}
+	for _, opt := range opts {
+		opt(factory.options)
 	}
 	factory.credentials, err = LoadTLSCredentials(caCertPEM, clientCertPEM, clientKeyPEM)
 	if err != nil {
@@ -81,20 +70,17 @@ func (f MutualTLSFactory) NewConnection(ctx context.Context) (*grpc.ClientConn, 
 }
 
 func (f MutualTLSFactory) NewConnectionWithDialOpts(ctx context.Context, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
-	allOpts := []grpc.DialOption{
-		grpc.WithTransportCredentials(f.credentials),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                f.keepAliveTime,
-			Timeout:             f.keepAliveTimeout,
-			PermitWithoutStream: true,
-		}),
+	allOpts := make([]grpc.DialOption, 0)
+
+	if f.options.keepalive != nil {
+		allOpts = append(allOpts, grpc.WithKeepaliveParams(*f.options.keepalive))
 	}
 
-	if f.useSnappyCompression {
+	if f.options.withSnappyCompression {
 		allOpts = append(allOpts, grpc.WithDefaultCallOptions(grpc.UseCompressor(SnappyCompressor())))
 	}
 
-	if f.useOtel {
+	if f.options.withOtelTracing {
 		allOpts = append(allOpts, grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	}
 
@@ -125,13 +111,13 @@ func (f MutualTLSFactory) NewConnectionWithDialOpts(ctx context.Context, opts ..
 }
 
 func (f MutualTLSFactory) ConnectionOk(ctx context.Context, conn *grpc.ClientConn) error {
-	if f.pingFunc == nil {
+	if f.options.pingFunc == nil {
 		return nil
 	}
 
 	// we have to send a request to the server to see if we can actually write to the socket
 	// implementing a ping/pong rpc is useful for this
-	_, err := f.pingFunc(ctx, conn)
+	_, err := f.options.pingFunc(ctx, conn)
 	if err != nil {
 		if conn != nil {
 			_ = conn.Close()
