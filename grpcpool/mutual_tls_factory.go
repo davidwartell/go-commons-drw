@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"github.com/davidwartell/go-commons-drw/logger"
 	"github.com/pkg/errors"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
@@ -38,6 +39,7 @@ type MutualTLSFactory struct {
 	keepAliveTimeout     time.Duration
 	pingFunc             PingFunc
 	useSnappyCompression bool
+	useOtel              bool
 }
 
 // PingFunc should send a GRPC ping/pong to the other side of conn.  Returns err or latency.
@@ -53,6 +55,7 @@ func NewMutualTLSFactory(
 	keepAliveTimeout time.Duration,
 	pingFunc PingFunc,
 	useSnappyCompression bool,
+	useOtel bool,
 ) (MutualTLSFactory, error) {
 	var err error
 	factory := MutualTLSFactory{
@@ -60,6 +63,7 @@ func NewMutualTLSFactory(
 		keepAliveTimeout:     keepAliveTimeout,
 		pingFunc:             pingFunc,
 		useSnappyCompression: useSnappyCompression,
+		useOtel:              useOtel,
 	}
 	factory.credentials, err = LoadTLSCredentials(caCertPEM, clientCertPEM, clientKeyPEM)
 	if err != nil {
@@ -88,6 +92,10 @@ func (f MutualTLSFactory) NewConnectionWithDialOpts(ctx context.Context, opts ..
 
 	if f.useSnappyCompression {
 		allOpts = append(allOpts, grpc.WithDefaultCallOptions(grpc.UseCompressor(SnappyCompressor())))
+	}
+
+	if f.useOtel {
+		allOpts = append(allOpts, grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	}
 
 	if len(opts) > 0 {

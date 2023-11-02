@@ -62,6 +62,7 @@ GO_MODULES += "github.com/sirupsen/logrus"
 GO_MODULES += "github.com/stealthmodesoft/service@0c1cf24"
 GO_MODULES += "github.com/jpillora/backoff"
 GO_MODULES += "github.com/golang/snappy"
+GO_MODULES += "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 
 GO_MODULES_TOOLS += "github.com/securego/gosec/v2/cmd/gosec"
 
