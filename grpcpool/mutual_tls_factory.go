@@ -28,15 +28,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/security/advancedtls"
-	"time"
 )
 
 type MutualTLSFactory struct {
-	credentials      credentials.TransportCredentials
-	dialAddr         string
-	keepAliveTime    time.Duration
-	keepAliveTimeout time.Duration
-	options          *Options
+	credentials credentials.TransportCredentials
+	dialAddr    string
+	options     *Options
 }
 
 //goland:noinspection GoUnusedExportedFunction
