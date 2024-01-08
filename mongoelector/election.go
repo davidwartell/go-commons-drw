@@ -23,12 +23,10 @@ import (
 	"context"
 	"github.com/davidwartell/go-commons-drw/logger"
 	"github.com/davidwartell/go-commons-drw/mongostore"
-	"github.com/davidwartell/go-commons-drw/mongouuid"
 	"github.com/pkg/errors"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/x/bsonx"
 	"net"
 	"runtime/debug"
 	"strconv"
@@ -59,8 +57,6 @@ type FollowerWorker interface {
 	// Stop the worker. May be called multiple times in a row.
 	Stop()
 }
-
-type CandidateId = mongouuid.UUID
 
 type Elector struct {
 	rwMutex            sync.RWMutex
@@ -160,7 +156,7 @@ func NewElector(
 			thisInstanceLeaderHostname: thisInstanceLeaderHostname,
 			thisInstanceLeaderPort:     thisInstanceLeaderPort,
 			options:                    options,
-			thisLeaderUUID:             mongouuid.MakeUUID(),
+			thisLeaderUUID:             MakeCandidateId(),
 		},
 	}
 	e.rwMutex.Lock()
@@ -199,8 +195,8 @@ var ManagedIndexes = []mongostore.Index{
 		Version:        0,
 		Model: mongo.IndexModel{
 			Options: options.Index().SetExpireAfterSeconds(0),
-			Keys: bsonx.Doc{
-				{Key: "ttlExpire", Value: bsonx.Int32(mongostore.ASC)},
+			Keys: bson.D{
+				{Key: "ttlExpire", Value: mongostore.ASC},
 			},
 		},
 	},
@@ -462,7 +458,7 @@ func leaderHeartbeat(ctx context.Context, config electorConfig, database *mongos
 	}
 	cancelFilter := bson.D{
 		{"_id", config.boundary},
-		{"leaderUUID", config.thisLeaderUUID.Raw()},
+		{"leaderUUID", config.thisLeaderUUID},
 	}
 	var dltRslt *mongo.DeleteResult
 	dltRslt, err = cancelCollection.DeleteOne(cancelCtx, cancelFilter)
@@ -493,7 +489,7 @@ func runLeaderHeartbeatLoop(ctx context.Context, config electorConfig, database 
 		}
 		queueInsertFilter := bson.D{
 			{"_id", config.boundary},
-			{"leaderUUID", config.thisLeaderUUID.Raw()},
+			{"leaderUUID", config.thisLeaderUUID},
 		}
 		queueUpdateOnInsert := bson.D{
 			{"$set", setDoc},

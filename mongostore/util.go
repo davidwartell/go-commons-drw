@@ -18,9 +18,7 @@
 package mongostore
 
 import (
-	"encoding/binary"
 	"github.com/davidwartell/go-commons-drw/logger"
-	"github.com/davidwartell/go-commons-drw/mongouuid"
 	"reflect"
 	"unicode/utf8"
 )
@@ -30,7 +28,6 @@ const (
 )
 
 var stringSliceType = reflect.TypeOf([]string{})
-var mongouuidSliceType = reflect.TypeOf([]mongouuid.UUID{})
 
 // TruncateStringSliceForMongoDoc ensures a string slice will fit in the mongodb doc size limit and truncates the slice
 // if necessary logging a warning.
@@ -51,30 +48,6 @@ func TruncateStringSliceForMongoDoc(slice []string) (newSlice []string) {
 			newSlice = slice[:index]
 			return
 		}
-	}
-	newSlice = slice
-	return
-}
-
-// TruncateUUIDSliceForMongoDoc ensures a mongouuid.UUID slice will fit in the mongodb doc size limit and truncates the
-// slice if necessary logging a warning.
-//
-//goland:noinspection GoUnusedExportedFunction
-func TruncateUUIDSliceForMongoDoc(slice []mongouuid.UUID) (newSlice []mongouuid.UUID) {
-	sizeOfUUID := uint64(binary.Size(mongouuid.UUID{}))
-	lenOfSlice := uint64(len(slice))
-	sizeOfSlice := lenOfSlice * sizeOfUUID
-	if sizeOfSlice > MaxSliceSizePerMongoDocument {
-		allowedLength := MaxSliceSizePerMongoDocument / sizeOfUUID
-		newSlice = slice[:allowedLength]
-		logger.Instance().Warn(
-			"truncating slice to fit in mongo document",
-			logger.String("type", mongouuidSliceType.String()),
-			logger.Uint64("initialSliceLength", lenOfSlice),
-			logger.Uint64("truncatedSliceLength", allowedLength),
-			logger.Uint64("maxLengthBytes", MaxSliceSizePerMongoDocument),
-		)
-		return
 	}
 	newSlice = slice
 	return
