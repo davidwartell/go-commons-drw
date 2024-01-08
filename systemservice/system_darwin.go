@@ -20,7 +20,7 @@ package systemservice
 import (
 	"fmt"
 	"github.com/davidwartell/go-commons-drw/launchd"
-	"github.com/davidwartell/go-commons-drw/logger"
+	"github.com/davidwartell/go-logger-facade/logger"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stealthmodesoft/service"
 	"path/filepath"

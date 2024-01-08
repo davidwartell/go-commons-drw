@@ -19,7 +19,7 @@ package task
 
 import (
 	"context"
-	"github.com/davidwartell/go-commons-drw/logger"
+	"github.com/davidwartell/go-logger-facade/logger"
 	"runtime/debug"
 	"strings"
 )

@@ -18,7 +18,7 @@
 package profiler
 
 import (
-	"github.com/davidwartell/go-commons-drw/logger"
+	"github.com/davidwartell/go-logger-facade/logger"
 	"io/ioutil"
 	"os"
 	"path/filepath"

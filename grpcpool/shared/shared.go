@@ -20,7 +20,7 @@ package shared
 import (
 	"context"
 	"github.com/davidwartell/go-commons-drw/grpcpool"
-	"github.com/davidwartell/go-commons-drw/logger"
+	"github.com/davidwartell/go-logger-facade/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

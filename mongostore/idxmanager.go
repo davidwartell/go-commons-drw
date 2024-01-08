@@ -19,8 +19,8 @@ package mongostore
 
 import (
 	"context"
-	"github.com/davidwartell/go-commons-drw/logger"
 	"github.com/davidwartell/go-commons-drw/task"
+	"github.com/davidwartell/go-logger-facade/logger"
 	"github.com/jpillora/backoff"
 	"github.com/pkg/errors"
 	"go.mongodb.org/mongo-driver/mongo"

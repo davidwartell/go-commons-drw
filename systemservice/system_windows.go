@@ -18,7 +18,7 @@
 package systemservice
 
 import (
-	"github.com/davidwartell/go-commons-drw/logger"
+	"github.com/davidwartell/go-logger-facade/logger"
 	"github.com/google/go-cmp/cmp"
 	"github.com/stealthmodesoft/service"
 	"golang.org/x/sys/windows"

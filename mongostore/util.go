@@ -18,7 +18,7 @@
 package mongostore
 
 import (
-	"github.com/davidwartell/go-commons-drw/logger"
+	"github.com/davidwartell/go-logger-facade/logger"
 	"reflect"
 	"unicode/utf8"
 )

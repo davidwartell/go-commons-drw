@@ -115,25 +115,6 @@ func pingConn(ctx context.Context, conn *grpc.ClientConn) (time.Duration, error)
 MacOS Launch Daemon tooling.
 A facade and extra tooling around a fork of https://github.com/DHowett/go-plist that has changes I found necessary for control of MacOS Launch Daemon on customer computers.
 
-### logger
-Tooling and facade around https://github.com/uber-go/zap I needed to allow my application to log to a configurable number of loggers and a backup for when it goes wrong.
-After swapping logging libs once I wanted a facade to make it easy in the future that supported both structured & unstructured.
-Functions for both unstructured and structured logging, panic handling and special handling for cancelled contexts (don't log errors on normal network disconnects).
-Unstructured functions are marked Deprecated.
-
-```
-// start the logging service and configure name of your app used in log file names if you enable logging to files
-logger.Instance().StartTask(logger.WithProductNameShort("example"))        
-defer func() {
-    // make sure the log buffers are flushed/synced
-    _ = logger.Instance().StopTask
-}()
-isDevEnv := true
-if isDevEnv {
-    logger.Instance().SetConsoleLogging(true)
-}
-```
-
 ### mongoelector (experimental)
 I have a special use case where I needed leader election and relying on an off the shelf DLM (distributed lock manager) or Distributed K/V store like Zookeeper or Consul is not an option.
 Experimental use at your own risk.
@@ -260,24 +241,6 @@ Scaffolding for doing golang cpu and memory profiling.
 
 ### systemsservice
 Facade and scaffolding for windows background services and macos launch daemon.
-
-### watchdog 
-Watchdog will call the cancel function associated with the returned context when a max run time has been exceeded.  
-Pass the context returned to a long-running tasks that can be interrupted by a cancelled context.
-
-```
-// create a new watchdog
-watchDog, watchDogCtx := watchdog.NewWatchDog(
-    ctx,
-    time.Duration(300) * time.Second,
-)
-defer watchDog.Cancel()
-
-// SomeLongRunningFunction that we want to run no more than 300 seconds.  Function should exit if watchDogCtx is cancelled.
-// Use context aware network/database connections in this function.  If you have long running computations in a loop
-// periodically check if watchDogCtx.Err() != nil in SomeLongRunningFunction.
-SomeLongRunningFunction(watchDogCtx)
-```
 
 ## Contributing
 

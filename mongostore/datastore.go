@@ -20,8 +20,8 @@ package mongostore
 //goland:noinspection SpellCheckingInspection
 import (
 	"context"
-	"github.com/davidwartell/go-commons-drw/logger"
 	"github.com/davidwartell/go-commons-drw/task"
+	"github.com/davidwartell/go-logger-facade/logger"
 	"github.com/pkg/errors"
 	"go.mongodb.org/mongo-driver/event"
 	"go.mongodb.org/mongo-driver/mongo"
