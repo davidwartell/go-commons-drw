@@ -45,6 +45,7 @@ golint: ## Run golangci-lint linter.
 	golangci-lint run -D govet -D staticcheck
 
 GO_MODULES += "go.uber.org/zap"
+GO_MODULES += "go.uber.org/atomic"
 GO_MODULES += "golang.org/x/sync/semaphore"
 GO_MODULES += "google.golang.org/grpc/codes"
 GO_MODULES += "google.golang.org/grpc/status"
