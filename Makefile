@@ -40,8 +40,8 @@ clean: ## Clean.
 	$(GO_CLEAN)
 
 # FIXME remove exclude for "-D staticcheck" when deprecated logging API usage is fixed
-.PHONY: golint
-golint: ## Run golangci-lint linter.
+.PHONY: lint
+lint: ## Run golangci-lint linter.
 	golangci-lint run -D govet -D staticcheck
 
 GO_MODULES += "go.uber.org/zap"

@@ -30,7 +30,7 @@ make test
 * Linter
 
 ```
-make golint
+make lint
 ```
 
 * Security Linter
