@@ -297,20 +297,6 @@ Scaffolding for doing golang cpu and memory profiling.
 ### systemsservice
 Facade and scaffolding for windows background services and macos launch daemon.
 
-### timeoutlock
-A Mutex for long-running requests where Lock can be interrupted by canceling a context.
-
-```
-// create a lock
-runLock := timeoutlock.NewMutex()
-
-if success := runLock.Lock(ctx); !success {
-    return errors.New("error gave up trying to aquiring lock for foo")
-}
-// do something here you need a lock for
-defer runLock.Unlock()
-```
-
 ### watchdog 
 Watchdog will call the cancel function associated with the returned context when a max run time has been exceeded.  
 Pass the context returned to a long-running tasks that can be interrupted by a cancelled context.
