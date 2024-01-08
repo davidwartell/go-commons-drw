@@ -1,6 +1,8 @@
 module github.com/davidwartell/go-commons-drw
 
-go 1.19
+go 1.21.3
+
+toolchain go1.21.5
 
 require (
 	github.com/golang/snappy v0.0.4
@@ -25,6 +27,7 @@ require (
 require (
 	github.com/BurntSushi/toml v1.3.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/davidwartell/go-leakfree-timer v0.0.0-20240108174422-5b8720a1b7e3 // indirect
 	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
