@@ -4,18 +4,15 @@ go 1.21.5
 
 require (
 	github.com/davidwartell/go-logger-facade v0.0.0-20240109140154-936cab599dc5
-	github.com/davidwartell/go-onecontext v1.0.1
-	github.com/google/go-cmp v0.6.0
-	github.com/jpillora/backoff v1.0.0
+	github.com/davidwartell/go-mongo-manager v1.0.1
 	github.com/pkg/errors v0.9.1
-	github.com/stealthmodesoft/service v1.2.1-0.20210913235040-0c1cf24eb230
 	go.mongodb.org/mongo-driver v1.13.1
-	golang.org/x/sys v0.16.0
-	howett.net/plist v1.0.1
 )
 
 require (
+	github.com/davidwartell/go-onecontext v1.0.1 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
+	github.com/jpillora/backoff v1.0.0 // indirect
 	github.com/klauspost/compress v1.17.4 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -31,5 +28,6 @@ require (
 	go.uber.org/zap v1.26.0 // indirect
 	golang.org/x/crypto v0.18.0 // indirect
 	golang.org/x/sync v0.6.0 // indirect
+	golang.org/x/sys v0.16.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 )

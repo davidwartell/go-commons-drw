@@ -21,8 +21,8 @@ package mongoelector
 
 import (
 	"context"
-	"github.com/davidwartell/go-commons-drw/mongostore"
 	"github.com/davidwartell/go-logger-facade/logger"
+	"github.com/davidwartell/go-mongo-manager/mongostore"
 	"github.com/pkg/errors"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
